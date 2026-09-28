@@ -6,6 +6,9 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_ENV=production
 ENV HOSTNAME="0.0.0.0"
 ENV PORT=3000
+# Placeholder environment variables untuk tahap build Next.js (dioverride saat runtime)
+ENV DATABASE_URL="postgresql://postgres:postgres@localhost:5432/simpus_db?schema=public"
+ENV AUTH_SECRET="simpus_satak_secret_key_at_least_32_characters_long_123456"
 
 # Install dependencies sistem yang dibutuhkan Prisma dan runtime
 RUN apt-get update \
