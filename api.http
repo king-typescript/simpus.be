@@ -22,5 +22,6 @@ Content-Type: application/json
 GET http://localhost:3000/api/buku
 Content-Type: application/json
 
-
-// Dockerfile
+### list salinan buku
+GET http://localhost:3000/api/salinan-buku
+Content-Type: application/json
