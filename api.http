@@ -42,4 +42,12 @@ Cookie: simpli_auth=TOKEN_LOGIN
 POST http://localhost:3000/api/internal/jobs/fines
 Authorization: Bearer 2f37709150832e3dcf227bae6c1787c2c56833979e4b6fdfb1b862bf512d26be
 Content-Type: application/json
+
+### perpanjang
+POST http://localhost:3000/api/sirkulasi/perpanjang
+Content-Type: application/json
+
+{
+  "loanId": "uuid"
+}
 // Dockerfile

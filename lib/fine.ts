@@ -9,5 +9,9 @@ export function calculateDaysLate(dueDate: Date, referenceDate = new Date()) {
 }
 
 export function calculateFine(daysLate: number, ratePerDay: Prisma.Decimal) {
+  if (!Number.isInteger(daysLate) || daysLate < 0) {
+    throw new Error("daysLate must be a non-negative integer.");
+  }
+
   return ratePerDay.mul(daysLate);
 }
