@@ -43,6 +43,7 @@ const bookSelect = {
   createdAt: true, updatedAt: true,
   category: { select: { id: true, name: true, ddcCode: true } },
   authors: { select: { id: true, name: true }, orderBy: { name: "asc" as const } },
+  _count: { select: { copies: { where: { isActive: true } } } },
 } as const;
 
 export async function GET(request: Request) {
@@ -84,7 +85,7 @@ export async function GET(request: Request) {
       prisma.book.findMany({ where, select: bookSelect, orderBy: [{ createdAt: "desc" }, { id: "desc" }], skip: (page - 1) * limit, take: limit }),
       prisma.book.count({ where }),
     ]);
-    return NextResponse.json({ data, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } }, { headers: noStoreHeaders });
+    return NextResponse.json({ data: data.map(({ _count, ...book }) => ({ ...book, copyCount: _count.copies })), pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } }, { headers: noStoreHeaders });
   } catch {
     return errorResponse("Terjadi kesalahan pada server.", 500);
   }

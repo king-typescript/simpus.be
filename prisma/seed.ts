@@ -39,6 +39,17 @@ async function main() {
   ]);
 
   await prisma.$transaction(async (tx) => {
+    await tx.librarySetting.upsert({
+      where: { key: "DEFAULT" },
+      update: {},
+      create: {
+        key: "DEFAULT",
+        maxLoanDays: 7,
+        maxActiveCopies: 3,
+        fineRatePerDay: "1000.00",
+      },
+    });
+
     const librarian = await tx.user.upsert({
       where: { username: "admin" },
       update: {

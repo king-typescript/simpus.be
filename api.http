@@ -22,5 +22,24 @@ Content-Type: application/json
 GET http://localhost:3000/api/buku
 Content-Type: application/json
 
+### salinan buku
+GET http://localhost:3000/api/salinan-buku
+Content-Type: application/json
 
+### sirkulasi/kembali
+POST http://localhost:3000/api/sirkulasi/kembali
+Content-Type: application/json
+Cookie: simpli_auth=TOKEN_LOGIN
+
+{
+  "loanItemId": "UUID_LOAN_ITEM",
+  "status": "TERSEDIA",
+  "returnCondition": "Baik",
+  "returnNote": "Dikembalikan lengkap"
+}
+
+### salinan buku
+POST http://localhost:3000/api/internal/jobs/fines
+Authorization: Bearer 2f37709150832e3dcf227bae6c1787c2c56833979e4b6fdfb1b862bf512d26be
+Content-Type: application/json
 // Dockerfile

@@ -50,6 +50,18 @@ enum PaymentMethod {
   CASH
 }
 
+model LibrarySetting {
+  id              String   @id @default(uuid())
+  key             String   @unique @default("DEFAULT")
+  maxLoanDays     Int      @default(7)
+  maxActiveCopies Int      @default(3)
+  fineRatePerDay  Decimal  @default(0) @db.Decimal(12, 2)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("library_settings")
+}
+
 model User {
   id           String     @id @default(uuid())
   role         UserRole   @default(SISWA)
@@ -173,6 +185,7 @@ model BookCopy {
   @@index([bookId])
   @@index([shelfId])
   @@index([status])
+  @@index([isActive])
   @@map("book_copies")
 }
 
