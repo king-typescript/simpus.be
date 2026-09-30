@@ -1,0 +1,237 @@
+diff --git a/.dockerignore b/.dockerignore
+index 14d1ae5..d592120 100644
+--- a/.dockerignore
++++ b/.dockerignore
+@@ -1,9 +1,17 @@
+ node_modules
+ .next
+ .git
+-.env*
++.gitignore
++.env
++.env.*
++!.env.example
+ *.log
+ npm-debug.log*
+ yarn-debug.log*
+ yarn-error.log*
+ pnpm-debug.log*
++.DS_Store
++Dockerfile*
++docker-compose*.yml
++PRD.md
++api.http
+diff --git a/.env.example b/.env.example
+new file mode 100644
+index 0000000..1d70dcb
+--- /dev/null
++++ b/.env.example
+@@ -0,0 +1,24 @@
++# Application Settings
++NODE_ENV=production
++PORT=3000
++HOSTNAME=0.0.0.0
++
++# Database Settings (Local / Docker)
++POSTGRES_USER=postgres
++POSTGRES_PASSWORD=postgres
++POSTGRES_DB=simpus_db
++
++# Database Connection URL
++# Untuk Docker Compose internal: postgresql://postgres:postgres@postgres:5432/simpus_db?schema=public
++# Untuk koneksi langsung dari host: postgresql://postgres:postgres@localhost:5432/simpus_db?schema=public
++DATABASE_URL=postgresql://postgres:postgres@postgres:5432/simpus_db?schema=public
++
++# Authentication (Wajib minimal 32 karakter)
++AUTH_SECRET=simpus_satak_secret_key_at_least_32_characters_long_123456
++
++# Migration
++RUN_MIGRATION=true
++
++# Database Seeder Credentials (Wajib minimal 12 karakter saat menjalankan seed)
++SEED_ADMIN_PASSWORD=adminSimpus123
++SEED_STUDENT_PASSWORD=siswaSimpus123
+diff --git a/.gitignore b/.gitignore
+index 45254b6..09d804a 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -32,6 +32,7 @@ yarn-error.log*
+ 
+ # env files (can opt-in for committing if needed)
+ .env*
++!.env.example
+ 
+ # vercel
+ .vercel
+@@ -41,3 +42,5 @@ yarn-error.log*
+ next-env.d.ts
+ 
+ /app/generated/prisma
++
++.agents
+\ No newline at end of file
+diff --git a/Dockerfile b/Dockerfile
+index 3a34148..644a8c2 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -3,23 +3,43 @@ FROM node:22-bookworm-slim
+ ENV PNPM_HOME="/pnpm"
+ ENV PATH="$PNPM_HOME:$PATH"
+ ENV NEXT_TELEMETRY_DISABLED=1
+-
++ENV NODE_ENV=production
++ENV HOSTNAME="0.0.0.0"
++ENV PORT=3000
++# Placeholder environment variables untuk tahap build Next.js (dioverride saat runtime)
++ENV DATABASE_URL="postgresql://postgres:postgres@localhost:5432/simpus_db?schema=public"
++ENV AUTH_SECRET="simpus_satak_secret_key_at_least_32_characters_long_123456"
++
++# Install dependencies sistem yang dibutuhkan Prisma dan runtime
+ RUN apt-get update \
+-  && apt-get install -y --no-install-recommends openssl \
++  && apt-get install -y --no-install-recommends openssl ca-certificates \
+   && rm -rf /var/lib/apt/lists/*
+ 
++# Aktifkan pnpm versi 12.6.0 sesuai konfigurasi packageManager di package.json
+ RUN corepack enable && corepack prepare pnpm@12.6.0 --activate
+ 
+ WORKDIR /app
+ 
++# Salin file konfigurasi paket untuk memanfaatkan layer cache Docker
+ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
++
++# Install dependensi menggunakan pnpm
+ RUN pnpm install --frozen-lockfile
+ 
++# Salin seluruh kode aplikasi
+ COPY . .
+ 
++# Pastikan script entrypoint menggunakan format UNIX dan memiliki izin eksekusi
++RUN sed -i 's/\r$//' /app/docker-entrypoint.sh \
++  && chmod +x /app/docker-entrypoint.sh
++
++# Generate Prisma Client
+ RUN pnpm prisma generate
++
++# Build aplikasi Next.js
+ RUN pnpm build
+ 
+ EXPOSE 3000
+ 
++ENTRYPOINT ["/app/docker-entrypoint.sh"]
+ CMD ["pnpm", "start"]
+* Unmerged path api.http
+* Unmerged path app/api/salinan-buku/[id]/route.ts
+* Unmerged path app/api/salinan-buku/route.ts
+diff --git a/docker-compose.yml b/docker-compose.yml
+new file mode 100644
+index 0000000..59d2454
+--- /dev/null
++++ b/docker-compose.yml
+@@ -0,0 +1,51 @@
++services:
++  postgres:
++    image: postgres:16-alpine
++    container_name: simpus_postgres
++    restart: unless-stopped
++    environment:
++      POSTGRES_USER: ${POSTGRES_USER:-postgres}
++      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
++      POSTGRES_DB: ${POSTGRES_DB:-simpus_db}
++    volumes:
++      - postgres_data:/var/lib/postgresql/data
++    healthcheck:
++      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-simpus_db}"]
++      interval: 5s
++      timeout: 5s
++      retries: 5
++      start_period: 10s
++    networks:
++      - simpus_network
++
++  app:
++    build:
++      context: .
++      dockerfile: Dockerfile
++    container_name: simpus_app
++    restart: unless-stopped
++    ports:
++      - "${PORT:-3000}:3000"
++    env_file:
++      - path: .env
++        required: false
++    environment:
++      NODE_ENV: production
++      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-simpus_db}?schema=public
++      AUTH_SECRET: ${AUTH_SECRET:-simpus_satak_secret_key_at_least_32_characters_long_123456}
++      PORT: 3000
++      HOSTNAME: 0.0.0.0
++      RUN_MIGRATION: ${RUN_MIGRATION:-true}
++    depends_on:
++      postgres:
++        condition: service_healthy
++    networks:
++      - simpus_network
++
++volumes:
++  postgres_data:
++    driver: local
++
++networks:
++  simpus_network:
++    driver: bridge
+diff --git a/docker-entrypoint.sh b/docker-entrypoint.sh
+new file mode 100755
+index 0000000..e31257d
+--- /dev/null
++++ b/docker-entrypoint.sh
+@@ -0,0 +1,11 @@
++#!/bin/sh
++set -e
++
++# Jalankan migrasi Prisma secara otomatis jika RUN_MIGRATION aktif (default: true)
++if [ "${RUN_MIGRATION:-true}" = "true" ]; then
++  echo "==> [SIMPUS] Menjalankan Prisma migrate deploy..."
++  pnpm prisma migrate deploy
++  echo "==> [SIMPUS] Migrasi database berhasil diaplikasikan."
++fi
++
++exec "$@"
+diff --git a/lib/date.ts b/lib/date.ts
+new file mode 100644
+index 0000000..e9d611e
+--- /dev/null
++++ b/lib/date.ts
+@@ -0,0 +1,13 @@
++export const APP_TIMEZONE = "Asia/Makassar";
++
++/**
++ * Mengembalikan tanggal hari ini dalam format YYYY-MM-DD sesuai zona waktu Asia/Makassar (WITA, UTC+8).
++ */
++export function getTodayDateString(date: Date = new Date()): string {
++  return new Intl.DateTimeFormat("en-CA", {
++    timeZone: APP_TIMEZONE,
++    year: "numeric",
++    month: "2-digit",
++    day: "2-digit",
++  }).format(date);
++}
+diff --git a/lib/prisma.ts b/lib/prisma.ts
+index 87c8476..ec57aa0 100644
+--- a/lib/prisma.ts
++++ b/lib/prisma.ts
+@@ -7,11 +7,9 @@ const globalForPrisma = globalThis as unknown as {
+ };
+ 
+ function createPrismaClient() {
+-  const connectionString = process.env.DATABASE_URL;
+-
+-  if (!connectionString) {
+-    throw new Error("DATABASE_URL belum diatur.");
+-  }
++  const connectionString =
++    process.env.DATABASE_URL ||
++    "postgresql://postgres:postgres@localhost:5432/simpus_db?schema=public";
+ 
+   const adapter = new PrismaPg({ connectionString });
+ 

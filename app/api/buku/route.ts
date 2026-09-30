@@ -15,7 +15,7 @@ function uuid(value: unknown): value is string {
 }
 
 function record(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function integer(value: string | null, fallback: number, maximum = 1000) {

@@ -9,7 +9,7 @@ const SETTING_KEY = "DEFAULT";
 const returnStatuses = ["TERSEDIA", "RUSAK", "HILANG"] as const;
 type ReturnStatus = (typeof returnStatuses)[number];
 function errorResponse(error: string, status: number) { return NextResponse.json({ error }, { status, headers: noStoreHeaders }); }
-function record(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null; }
+function record(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
 function uuid(value: unknown): value is string { return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value); }
 function jsonValue(value: unknown) { return JSON.parse(JSON.stringify(value)); }
 async function serializable<T>(operation: () => Promise<T>) { for (let attempt = 0; attempt < 3; attempt += 1) { try { return await operation(); } catch (error: unknown) { const conflict = typeof error === "object" && error !== null && "code" in error && error.code === "P2034"; if (!conflict || attempt === 2) throw error; } } throw new Error("TRANSACTION_CONFLICT"); }

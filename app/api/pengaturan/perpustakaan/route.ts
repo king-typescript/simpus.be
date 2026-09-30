@@ -8,7 +8,7 @@ const SETTING_KEY = "DEFAULT";
 const editableFields = ["maxLoanDays", "maxActiveCopies", "fineRatePerDay"] as const;
 
 function errorResponse(error: string, status: number) { return NextResponse.json({ error }, { status, headers: noStoreHeaders }); }
-function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null; }
+function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
 function jsonValue(value: unknown) { return JSON.parse(JSON.stringify(value)); }
 function validMoney(value: string) { return /^\d{1,10}(?:\.\d{1,2})?$/.test(value); }
 function isTransactionConflict(error: unknown) { return typeof error === "object" && error !== null && "code" in error && error.code === "P2034"; }

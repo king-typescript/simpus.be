@@ -13,7 +13,7 @@ function errorResponse(error: string, status: number) {
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isPositiveInteger(value: string | null, fallback: number, maximum: number) {

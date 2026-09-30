@@ -95,7 +95,7 @@ export async function POST(request: Request) {
     return jsonError("Body JSON tidak valid.", 400);
   }
 
-  if (typeof body !== "object" || body === null) {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
     return jsonError("Body request tidak valid.", 422);
   }
 
