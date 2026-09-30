@@ -15,7 +15,7 @@ GET http://localhost:3000/api/anggota
 Content-Type: application/json
 
 ### lihat detail anggota
-GET http://localhost:3000/api/anggota/94c38d2f-0b69-4b79-aeed-b423720af87f
+GET http://localhost:3000/api/anggota/
 Content-Type: application/json
 
 ### list buku
@@ -51,3 +51,6 @@ Content-Type: application/json
   "loanId": "uuid"
 }
 // Dockerfile
+### list salinan buku
+GET http://localhost:3000/api/salinan-buku
+Content-Type: application/json
