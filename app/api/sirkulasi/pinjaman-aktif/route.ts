@@ -3,25 +3,17 @@ import { LoanStatus, Prisma } from "@/app/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { noStoreHeaders, requireLibrarian } from "@/lib/auth";
 import { calculateDaysLate, calculateFine } from "@/lib/fine";
+import {
+  isUuid,
+  parsePagination,
+} from "@/lib/validation";
 
 export const runtime = "nodejs";
 
 const SETTING_KEY = "DEFAULT";
-const DEFAULT_LIMIT = 20;
-const MAX_LIMIT = 100;
-const MAX_PAGE = 10_000;
 
 function errorResponse(error: string, status: number) {
   return NextResponse.json({ error }, { status, headers: noStoreHeaders });
-}
-
-function uuid(value: unknown): value is string {
-  return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
-}
-
-function integer(value: string | null, fallback: number, max: number) {
-  const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed > 0 && parsed <= max ? parsed : fallback;
 }
 
 function startOfUtcDay(date: Date) {
@@ -53,12 +45,13 @@ export async function GET(request: Request) {
   if (!auth.ok) return errorResponse("Tidak memiliki akses.", auth.status);
 
   const url = new URL(request.url);
-  const page = integer(url.searchParams.get("page"), 1, MAX_PAGE);
-  const limit = integer(url.searchParams.get("limit"), DEFAULT_LIMIT, MAX_LIMIT);
-  const studentId = url.searchParams.get("studentId");
-  const overdue = url.searchParams.get("overdue");
+  const pagination = parsePagination(url.searchParams);
+  if (!pagination.ok) return errorResponse(pagination.error, 422);
+  const { page, limit } = pagination.value;
+  const studentId = url.searchParams.get("studentId")?.trim() ?? "";
+  const overdue = url.searchParams.get("overdue")?.trim() ?? "";
 
-  if (studentId && !uuid(studentId)) return errorResponse("Student ID tidak valid.", 422);
+  if (studentId && !isUuid(studentId)) return errorResponse("Student ID tidak valid.", 422);
   if (overdue && overdue !== "true" && overdue !== "false") return errorResponse("Filter overdue tidak valid.", 422);
 
   const now = new Date();

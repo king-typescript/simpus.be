@@ -1,32 +1,27 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { noStoreHeaders, requireAuthenticatedUser, requireLibrarian } from "@/lib/auth";
+import {
+  getClientIp,
+  hasOnlyFields,
+  isJsonContentType,
+  isRecord,
+  normalizeText,
+  parseEnum,
+  parseOptionalString,
+  parsePagination,
+  parseRequiredString,
+  parseSearch,
+} from "@/lib/validation";
 
 export const runtime = "nodejs";
-
-const DEFAULT_LIMIT = 20;
-const MAX_LIMIT = 100;
-const MAX_PAGE = 10_000;
 
 function errorResponse(error: string, status: number) {
   return NextResponse.json({ error }, { status, headers: noStoreHeaders });
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isPositiveInteger(value: string | null, fallback: number, maximum: number) {
-  const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed > 0 && parsed <= maximum ? parsed : fallback;
-}
-
 function jsonValue(value: unknown) {
   return JSON.parse(JSON.stringify(value));
-}
-
-function hasOnlyFields(value: Record<string, unknown>, fields: readonly string[]) {
-  return Object.keys(value).every((key) => fields.includes(key));
 }
 
 const categorySelect = {
@@ -50,17 +45,18 @@ export async function GET(request: Request) {
   if (!auth.ok) return errorResponse("Autentikasi diperlukan.", auth.status);
 
   const url = new URL(request.url);
-  const page = isPositiveInteger(url.searchParams.get("page"), 1, MAX_PAGE);
-  const limit = isPositiveInteger(url.searchParams.get("limit"), DEFAULT_LIMIT, MAX_LIMIT);
-  const search = url.searchParams.get("search")?.trim() ?? "";
+  const pagination = parsePagination(url.searchParams);
+  if (!pagination.ok) return errorResponse(pagination.error, 422);
+  const searchResult = parseSearch(url.searchParams);
+  if (!searchResult.ok) return errorResponse(searchResult.error, 422);
   const status = url.searchParams.get("status")?.trim() ?? "";
-
-  if (status && status !== "AKTIF" && status !== "NONAKTIF") {
-    return errorResponse("Status kategori tidak valid.", 422);
-  }
+  const statusResult = status ? parseEnum(status, ["AKTIF", "NONAKTIF"] as const, "Status kategori") : null;
+  if (statusResult && !statusResult.ok) return errorResponse(statusResult.error, 422);
+  const { page, limit } = pagination.value;
+  const search = searchResult.value;
 
   const where = {
-    isActive: status ? status === "AKTIF" : true,
+    isActive: statusResult?.ok ? statusResult.value === "AKTIF" : true,
     ...(search ? {
       OR: [
         { name: { contains: search, mode: "insensitive" as const } },
@@ -94,6 +90,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const auth = await requireLibrarian();
   if (!auth.ok) return errorResponse("Tidak memiliki akses.", auth.status);
+  if (!isJsonContentType(request)) return errorResponse("Content-Type harus application/json.", 415);
 
   let body: unknown;
   try { body = await request.json(); } catch { return errorResponse("Body JSON tidak valid.", 400); }
@@ -101,20 +98,17 @@ export async function POST(request: Request) {
     return errorResponse("Body request tidak valid.", 422);
   }
 
-  const name = typeof body.name === "string" ? body.name.trim() : "";
-  const ddcCode = typeof body.ddcCode === "string" ? body.ddcCode.trim() : "";
-  const description = body.description === null || body.description === undefined
-    ? null
-    : typeof body.description === "string" ? body.description.trim() || null : undefined;
-
-  if (!name || name.length > 150 || ddcCode.length > 20 || !/^\d{3}(?:\.\d{1,10})?$/.test(ddcCode) || description === undefined || (description !== null && description.length > 1000)) {
-    return errorResponse("Data kategori tidak valid.", 422);
-  }
+  const nameResult = parseRequiredString(body.name, { field: "Nama kategori", maxLength: 150 });
+  const ddcCode = typeof body.ddcCode === "string" ? normalizeText(body.ddcCode) : "";
+  const descriptionResult = parseOptionalString(body.description, { field: "Deskripsi kategori", maxLength: 1000 });
+  if (!nameResult.ok || !/^\d{3}(?:\.\d{1,10})?$/.test(ddcCode) || !descriptionResult.ok) return errorResponse("Data kategori tidak valid.", 422);
+  const name = nameResult.value;
+  const description = descriptionResult.value ?? null;
 
   try {
     const category = await prisma.$transaction(async (tx) => {
       const created = await tx.category.create({ data: { name, ddcCode, description, isActive: true }, select: categorySelect });
-      await tx.auditLog.create({ data: { userId: auth.user.id, action: "CREATE", entityType: "Category", entityId: created.id, newData: jsonValue(created) } });
+      await tx.auditLog.create({ data: { userId: auth.user.id, action: "CREATE", entityType: "Category", entityId: created.id, newData: jsonValue(created), ipAddress: getClientIp(request) } });
       return created;
     });
     return NextResponse.json({ data: toCategoryResponse(category) }, { status: 201, headers: noStoreHeaders });

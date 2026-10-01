@@ -12,13 +12,22 @@ vi.mock("@/lib/auth", () => ({
     maxAge: 0,
   },
   noStoreHeaders: { "Cache-Control": "no-store" },
+  requireAuthenticatedUser: vi.fn().mockResolvedValue({ ok: false }),
+}));
+
+vi.mock("@/lib/prisma", () => ({
+  prisma: { auditLog: { create: vi.fn() } },
 }));
 
 const { POST } = await import("@/app/api/auth/logout/route");
 
+function mockRequest() {
+  return new Request("http://localhost/api/auth/logout", { method: "POST" });
+}
+
 describe("POST /api/auth/logout", () => {
   it("returns successful logout response", async () => {
-    const response = await POST();
+    const response = await POST(mockRequest());
 
     expect(response.status).toBe(200);
     expect(response.headers.get("Cache-Control")).toBe("no-store");
@@ -26,7 +35,7 @@ describe("POST /api/auth/logout", () => {
   });
 
   it("clears authentication cookie", async () => {
-    const cookie = (await POST()).headers.get("set-cookie");
+    const cookie = (await POST(mockRequest())).headers.get("set-cookie");
 
     expect(cookie).toContain(`${AUTH_COOKIE_NAME}=`);
     expect(cookie).toContain("Max-Age=0");

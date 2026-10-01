@@ -1,6 +1,14 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { noStoreHeaders, requireAuthenticatedUser, requireLibrarian } from "@/lib/auth";
+import {
+  getClientIp,
+  hasOnlyFields,
+  isJsonContentType,
+  isRecord,
+  isUuid,
+  parseRequiredString,
+} from "@/lib/validation";
 
 export const runtime = "nodejs";
 type RouteContext = { params: Promise<{ id: string }> };
@@ -9,22 +17,8 @@ const MAX_BODY_BYTES = 64 * 1024;
 function errorResponse(error: string, status: number) {
   return NextResponse.json({ error }, { status, headers: noStoreHeaders });
 }
-function isUuid(value: unknown): value is string {
-  return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
-}
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-function hasOnlyFields(value: Record<string, unknown>, fields: readonly string[]) {
-  return Object.keys(value).every((key) => fields.includes(key));
-}
 function jsonValue(value: unknown) {
   return JSON.parse(JSON.stringify(value));
-}
-function clientIp(request: Request) {
-  return request.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
-    || request.headers.get("x-real-ip")
-    || null;
 }
 async function readJson(request: Request): Promise<{ ok: true; body: unknown } | { ok: false; response: Response }> {
   const contentLength = Number(request.headers.get("content-length"));
@@ -67,20 +61,23 @@ export async function PATCH(request: Request, context: RouteContext) {
   const { id } = await context.params;
   if (!isUuid(id)) return errorResponse("ID penulis tidak valid.", 422);
 
+  if (!isJsonContentType(request)) return errorResponse("Content-Type harus application/json.", 415);
+
   const parsed = await readJson(request);
   if (!parsed.ok) return parsed.response;
   if (!isRecord(parsed.body) || !hasOnlyFields(parsed.body, ["name"])) return errorResponse("Body request tidak valid.", 422);
   if (!("name" in parsed.body)) return errorResponse("Tidak ada perubahan.", 422);
 
-  const name = typeof parsed.body.name === "string" ? parsed.body.name.replace(/\s+/g, " ").trim() : "";
-  if (!name || name.length > 150) return errorResponse("Nama penulis tidak valid.", 422);
+  const nameResult = parseRequiredString(parsed.body.name, { field: "Nama penulis", maxLength: 150 });
+  if (!nameResult.ok) return errorResponse(nameResult.error, 422);
+  const name = nameResult.value;
 
   try {
     const author = await prisma.$transaction(async (tx) => {
       const current = await tx.author.findUnique({ where: { id }, select: authorSelect });
       if (!current) return null;
       const updated = await tx.author.update({ where: { id }, data: { name }, select: authorSelect });
-      await tx.auditLog.create({ data: { userId: auth.user.id, action: "UPDATE", entityType: "Author", entityId: id, oldData: jsonValue(current), newData: jsonValue(updated), ipAddress: clientIp(request) } });
+      await tx.auditLog.create({ data: { userId: auth.user.id, action: "UPDATE", entityType: "Author", entityId: id, oldData: jsonValue(current), newData: jsonValue(updated), ipAddress: getClientIp(request) } });
       return updated;
     });
     return author ? NextResponse.json({ data: toAuthorResponse(author) }, { headers: noStoreHeaders }) : errorResponse("Penulis tidak ditemukan.", 404);
@@ -102,7 +99,7 @@ export async function DELETE(request: Request, context: RouteContext) {
       if (!author) return false;
       if (author._count.books > 0) throw new Error("AUTHOR_HAS_BOOKS");
       await tx.author.delete({ where: { id } });
-      await tx.auditLog.create({ data: { userId: auth.user.id, action: "DELETE", entityType: "Author", entityId: id, oldData: jsonValue(author), ipAddress: clientIp(request) } });
+      await tx.auditLog.create({ data: { userId: auth.user.id, action: "DELETE", entityType: "Author", entityId: id, oldData: jsonValue(author), ipAddress: getClientIp(request) } });
       return true;
     }, { isolationLevel: "Serializable" });
     return deleted ? new NextResponse(null, { status: 204 }) : errorResponse("Penulis tidak ditemukan.", 404);

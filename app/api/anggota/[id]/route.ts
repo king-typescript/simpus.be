@@ -1,6 +1,15 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { noStoreHeaders, requireLibrarian } from "@/lib/auth";
+import {
+  getClientIp,
+  hasOnlyFields,
+  isJsonContentType,
+  isRecord,
+  isUuid,
+  parseOptionalString,
+  parseRequiredString,
+} from "@/lib/validation";
 
 export const runtime = "nodejs";
 
@@ -10,8 +19,8 @@ function jsonError(error: string, status: number) {
   return NextResponse.json({ error }, { status, headers: noStoreHeaders });
 }
 
-function validId(id: string) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id);
+function jsonValue(value: unknown) {
+  return JSON.parse(JSON.stringify(value));
 }
 
 const selectStudent = {
@@ -32,7 +41,7 @@ export async function GET(_request: Request, context: RouteContext) {
   const auth = await requireLibrarian();
   if (!auth.ok) return jsonError("Tidak memiliki akses.", auth.status);
   const { id } = await context.params;
-  if (!validId(id)) return jsonError("ID anggota tidak valid.", 422);
+  if (!isUuid(id)) return jsonError("ID anggota tidak valid.", 422);
 
   try {
     const data = await prisma.student.findUnique({ where: { id }, select: selectStudent });
@@ -46,33 +55,35 @@ export async function PATCH(request: Request, context: RouteContext) {
   const auth = await requireLibrarian();
   if (!auth.ok) return jsonError("Tidak memiliki akses.", auth.status);
   const { id } = await context.params;
-  if (!validId(id)) return jsonError("ID anggota tidak valid.", 422);
+  if (!isUuid(id)) return jsonError("ID anggota tidak valid.", 422);
 
+  if (!isJsonContentType(request)) return jsonError("Content-Type harus application/json.", 415);
   let body: unknown;
   try { body = await request.json(); } catch { return jsonError("Body JSON tidak valid.", 400); }
-  if (typeof body !== "object" || body === null) return jsonError("Body request tidak valid.", 422);
+  if (!isRecord(body) || !hasOnlyFields(body, ["nis", "name", "className", "libraryCardNumber", "phone"])) return jsonError("Body request tidak valid.", 422);
 
-  const input = body as Record<string, unknown>;
   const data: { nis?: string; name?: string; className?: string; libraryCardNumber?: string; phone?: string | null } = {};
   for (const field of ["nis", "name", "className", "libraryCardNumber"] as const) {
-    if (field in input) {
-      if (typeof input[field] !== "string" || !input[field].trim()) return jsonError("Data anggota tidak valid.", 422);
-      data[field] = input[field].trim();
+    if (field in body) {
+      const result = parseRequiredString(body[field], { field, maxLength: field === "nis" ? 50 : field === "name" ? 150 : field === "className" ? 100 : 100 });
+      if (!result.ok) return jsonError(result.error, 422);
+      data[field] = result.value;
     }
   }
-  if ("phone" in input) {
-    if (input.phone !== null && typeof input.phone !== "string") return jsonError("Nomor telepon tidak valid.", 422);
-    data.phone = typeof input.phone === "string" ? input.phone.trim() || null : null;
+  if ("phone" in body) {
+    const result = parseOptionalString(body.phone, { field: "Nomor telepon", maxLength: 30, normalize: false });
+    if (!result.ok) return jsonError(result.error, 422);
+    data.phone = result.value ?? null;
   }
   if (!Object.keys(data).length) return jsonError("Tidak ada perubahan.", 422);
 
   try {
     const updated = await prisma.$transaction(async (tx) => {
-      const current = await tx.student.findUnique({ where: { id }, select: { userId: true } });
+      const current = await tx.student.findUnique({ where: { id }, select: { ...selectStudent, userId: true } });
       if (!current) return null;
       const student = await tx.student.update({ where: { id }, data, select: selectStudent });
       if (data.name !== undefined) await tx.user.update({ where: { id: current.userId }, data: { name: data.name } });
-      await tx.auditLog.create({ data: { userId: auth.user.id, action: "UPDATE", entityType: "Student", entityId: id, newData: student } });
+      await tx.auditLog.create({ data: { userId: auth.user.id, action: "UPDATE", entityType: "Student", entityId: id, oldData: jsonValue(current), newData: jsonValue(student), ipAddress: getClientIp(request) } });
       return student;
     });
     return updated ? NextResponse.json({ data: updated }, { headers: noStoreHeaders }) : jsonError("Anggota tidak ditemukan.", 404);
@@ -82,19 +93,20 @@ export async function PATCH(request: Request, context: RouteContext) {
   }
 }
 
-export async function DELETE(_request: Request, context: RouteContext) {
+export async function DELETE(request: Request, context: RouteContext) {
   const auth = await requireLibrarian();
   if (!auth.ok) return jsonError("Tidak memiliki akses.", auth.status);
   const { id } = await context.params;
-  if (!validId(id)) return jsonError("ID anggota tidak valid.", 422);
+  if (!isUuid(id)) return jsonError("ID anggota tidak valid.", 422);
 
   try {
     const result = await prisma.$transaction(async (tx) => {
-      const student = await tx.student.findUnique({ where: { id }, select: { userId: true } });
+      const student = await tx.student.findUnique({ where: { id }, select: selectStudent });
       if (!student) return false;
+      const userId = student.user.id;
       await tx.student.update({ where: { id }, data: { isActive: false } });
-      await tx.user.update({ where: { id: student.userId }, data: { status: "NONAKTIF" } });
-      await tx.auditLog.create({ data: { userId: auth.user.id, action: "DEACTIVATE", entityType: "Student", entityId: id } });
+      await tx.user.update({ where: { id: userId }, data: { status: "NONAKTIF" } });
+      await tx.auditLog.create({ data: { userId: auth.user.id, action: "DEACTIVATE", entityType: "Student", entityId: id, oldData: jsonValue(student), newData: jsonValue({ ...student, isActive: false }), ipAddress: getClientIp(request) } });
       return true;
     });
     return result ? new NextResponse(null, { status: 204 }) : jsonError("Anggota tidak ditemukan.", 404);

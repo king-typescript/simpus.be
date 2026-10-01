@@ -132,7 +132,7 @@ describe("GET /api/denda", () => {
     expect(mocks.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: {}, skip: 0, take: 20 }));
   });
   it("applies status, search, and pagination", async () => { await listRoute.GET(request("GET", "http://localhost/api/denda?page=3&limit=25&status=BELUM_DIBAYAR&search=%20Budi%20")); expect(mocks.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ status: "BELUM_DIBAYAR", OR: expect.any(Array) }), skip: 50, take: 25 })); });
-  it.each(["0", "-1", "1.5", "bad"])("defaults invalid pagination %s", async value => { await listRoute.GET(request("GET", `http://localhost/api/denda?page=${value}&limit=${value}`)); expect(mocks.findMany).toHaveBeenCalledWith(expect.objectContaining({ skip: 0, take: 20 })); });
+  it.each(["0", "-1", "1.5", "bad"])("rejects invalid pagination %s", async value => { await error(await listRoute.GET(request("GET", `http://localhost/api/denda?page=${value}&limit=${value}`)), 422, "Parameter page tidak valid."); });
   it("rejects invalid status and long search", async () => { await error(await listRoute.GET(request("GET", "http://localhost/api/denda?status=BAD")), 422, "Status denda tidak valid."); await error(await listRoute.GET(request("GET", `http://localhost/api/denda?search=${"x".repeat(101)}`)), 422, "Pencarian terlalu panjang."); });
   it("maps query failure", async () => { mocks.transaction.mockRejectedValue(new Error("DB")); await error(await listRoute.GET(request("GET")), 500, "Terjadi kesalahan pada server."); });
 });

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { Prisma } from "@/app/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { noStoreHeaders, requireLibrarian } from "@/lib/auth";
+import { getClientIp, hasOnlyFields, isRecord, isUuid } from "@/lib/validation";
 
 export const runtime = "nodejs";
 
@@ -9,14 +10,6 @@ type RouteContext = { params: Promise<{ id: string }> };
 
 function errorResponse(error: string, status: number) {
   return NextResponse.json({ error }, { status, headers: noStoreHeaders });
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function uuid(value: unknown): value is string {
-  return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
 function validMoney(value: string) {
@@ -117,7 +110,7 @@ export async function GET(_request: Request, context: RouteContext) {
   if (!auth.ok) return errorResponse("Tidak memiliki akses.", auth.status);
 
   const { id } = await context.params;
-  if (!uuid(id)) return errorResponse("ID denda tidak valid.", 422);
+  if (!isUuid(id)) return errorResponse("ID denda tidak valid.", 422);
 
   try {
     const fine = await prisma.fine.findUnique({ where: { id }, select: fineSelect });
@@ -133,7 +126,7 @@ export async function POST(request: Request, context: RouteContext) {
   if (!isOriginAllowed(request)) return errorResponse("Origin tidak diizinkan.", 403);
 
   const { id } = await context.params;
-  if (!uuid(id)) return errorResponse("ID denda tidak valid.", 422);
+  if (!isUuid(id)) return errorResponse("ID denda tidak valid.", 422);
 
   let body: unknown;
   try {
@@ -142,7 +135,7 @@ export async function POST(request: Request, context: RouteContext) {
     return errorResponse("Body JSON tidak valid.", 400);
   }
 
-  if (!isRecord(body) || Object.keys(body).some((key) => !["receiptNumber", "amount", "note"].includes(key))) {
+  if (!isRecord(body) || !hasOnlyFields(body, ["receiptNumber", "amount", "note"])) {
     return errorResponse("Body request tidak valid.", 422);
   }
 
@@ -153,6 +146,8 @@ export async function POST(request: Request, context: RouteContext) {
   if (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$/.test(receiptNumber) || !validMoney(amount) || note === undefined || (note !== null && note.length > 1000)) {
     return errorResponse("Data pembayaran tidak valid.", 422);
   }
+
+  const ipAddress = getClientIp(request);
 
   try {
     const result = await serializable(() => prisma.$transaction(async (tx) => {
@@ -173,7 +168,7 @@ export async function POST(request: Request, context: RouteContext) {
       const updatedFine = await tx.fine.findUniqueOrThrow({ where: { id }, select: fineSelect });
 
       await tx.auditLog.create({
-        data: { userId: auth.user.id, action: "PAYMENT", entityType: "Fine", entityId: id, oldData: jsonValue(fine), newData: jsonValue(updatedFine) },
+        data: { userId: auth.user.id, action: "PAYMENT", entityType: "Fine", entityId: id, oldData: jsonValue(fine), newData: jsonValue(updatedFine), ipAddress },
       });
 
       return { fine: updatedFine, payment };

@@ -148,6 +148,7 @@ describe("POST /api/sirkulasi/kembali", () => {
   it("returns 400 for malformed JSON", async () => {
     const request = new Request("http://localhost/api/sirkulasi/kembali", {
       method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: "{invalid-json",
     });
 

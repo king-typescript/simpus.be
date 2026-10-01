@@ -116,6 +116,7 @@ describe("POST /api/sirkulasi/pinjam", () => {
   it("returns 400 for malformed JSON", async () => {
     const request = new Request("http://localhost/api/sirkulasi/pinjam", {
       method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: "{invalid-json",
     });
 

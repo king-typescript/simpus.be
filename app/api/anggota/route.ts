@@ -2,20 +2,24 @@ import { NextResponse } from "next/server";
 import argon2 from "argon2";
 import { prisma } from "@/lib/prisma";
 import { noStoreHeaders, requireLibrarian } from "@/lib/auth";
+import {
+  getClientIp,
+  hasOnlyFields,
+  isJsonContentType,
+  isRecord,
+  parseEnum,
+  parseOptionalString,
+  parsePagination,
+  parseRequiredString,
+  parseSearch,
+} from "@/lib/validation";
 
 export const runtime = "nodejs";
 
-const DEFAULT_LIMIT = 20;
-const MAX_LIMIT = 100;
 const PASSWORD_MIN_LENGTH = 12;
 
 function jsonError(error: string, status: number) {
   return NextResponse.json({ error }, { status, headers: noStoreHeaders });
-}
-
-function positiveInteger(value: string | null, fallback: number) {
-  const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 export async function GET(request: Request) {
@@ -23,21 +27,19 @@ export async function GET(request: Request) {
   if (!auth.ok) return jsonError("Tidak memiliki akses.", auth.status);
 
   const url = new URL(request.url);
-  const page = positiveInteger(url.searchParams.get("page"), 1);
-  const limit = Math.min(
-    positiveInteger(url.searchParams.get("limit"), DEFAULT_LIMIT),
-    MAX_LIMIT,
-  );
-  const search = url.searchParams.get("search")?.trim() ?? "";
+  const pagination = parsePagination(url.searchParams);
+  if (!pagination.ok) return jsonError(pagination.error, 422);
+  const searchResult = parseSearch(url.searchParams);
+  if (!searchResult.ok) return jsonError(searchResult.error, 422);
+  const { page, limit } = pagination.value;
+  const search = searchResult.value;
   const className = url.searchParams.get("className")?.trim() ?? "";
-  const status = url.searchParams.get("status");
-
-  if (status && status !== "AKTIF" && status !== "NONAKTIF") {
-    return jsonError("Status tidak valid.", 422);
-  }
+  const status = url.searchParams.get("status")?.trim() ?? "";
+  const statusResult = status ? parseEnum(status, ["AKTIF", "NONAKTIF"] as const, "Status") : null;
+  if (statusResult && !statusResult.ok) return jsonError(statusResult.error, 422);
 
   const where = {
-    ...(status ? { isActive: status === "AKTIF" } : {}),
+    ...(statusResult?.ok ? { isActive: statusResult.value === "AKTIF" } : {}),
     ...(className ? { className: { contains: className, mode: "insensitive" as const } } : {}),
     ...(search
       ? {
@@ -88,6 +90,8 @@ export async function POST(request: Request) {
   const auth = await requireLibrarian();
   if (!auth.ok) return jsonError("Tidak memiliki akses.", auth.status);
 
+  if (!isJsonContentType(request)) return jsonError("Content-Type harus application/json.", 415);
+
   let body: unknown;
   try {
     body = await request.json();
@@ -95,26 +99,23 @@ export async function POST(request: Request) {
     return jsonError("Body JSON tidak valid.", 400);
   }
 
-  if (typeof body !== "object" || body === null || Array.isArray(body)) {
-    return jsonError("Body request tidak valid.", 422);
-  }
+  if (!isRecord(body) || !hasOnlyFields(body, ["username", "password", "nis", "name", "className", "libraryCardNumber", "phone"])) return jsonError("Body request tidak valid.", 422);
 
-  const input = body as Record<string, unknown>;
-  const username = typeof input.username === "string" ? input.username.trim() : "";
-  const password = typeof input.password === "string" ? input.password : "";
-  const nis = typeof input.nis === "string" ? input.nis.trim() : "";
-  const name = typeof input.name === "string" ? input.name.trim() : "";
-  const className = typeof input.className === "string" ? input.className.trim() : "";
-  const libraryCardNumber = typeof input.libraryCardNumber === "string" ? input.libraryCardNumber.trim() : "";
-  const phone = input.phone === null || typeof input.phone === "string" ? input.phone?.trim() || null : undefined;
+  const usernameResult = parseRequiredString(body.username, { field: "Username", maxLength: 100, normalize: false });
+  const password = typeof body.password === "string" ? body.password : "";
+  const nisResult = parseRequiredString(body.nis, { field: "NIS", maxLength: 50 });
+  const nameResult = parseRequiredString(body.name, { field: "Nama", maxLength: 150 });
+  const classResult = parseRequiredString(body.className, { field: "Kelas", maxLength: 100 });
+  const cardResult = parseRequiredString(body.libraryCardNumber, { field: "Nomor kartu", maxLength: 100, normalize: false });
+  const phoneResult = parseOptionalString(body.phone, { field: "Nomor telepon", maxLength: 30, normalize: false });
 
-  if (
-    !username || username.length > 100 || password.length < PASSWORD_MIN_LENGTH || password.length > 256 ||
-    !nis || nis.length > 50 || !name || name.length > 150 || !className || className.length > 100 ||
-    !libraryCardNumber || libraryCardNumber.length > 100 || phone === undefined
-  ) {
-    return jsonError("Data anggota tidak valid.", 422);
-  }
+  if (!usernameResult.ok || password.length < PASSWORD_MIN_LENGTH || password.length > 256 || !nisResult.ok || !nameResult.ok || !classResult.ok || !cardResult.ok || !phoneResult.ok) return jsonError("Data anggota tidak valid.", 422);
+  const username = usernameResult.value;
+  const nis = nisResult.value;
+  const name = nameResult.value;
+  const className = classResult.value;
+  const libraryCardNumber = cardResult.value;
+  const phone = phoneResult.value ?? null;
 
   try {
     const passwordHash = await argon2.hash(password);
@@ -126,7 +127,7 @@ export async function POST(request: Request) {
         data: { userId: user.id, nis, name, className, libraryCardNumber, phone },
         select: { id: true, nis: true, name: true, className: true, libraryCardNumber: true, phone: true, isActive: true, joinedAt: true, user: { select: { id: true, username: true, status: true } } },
       });
-      await tx.auditLog.create({ data: { userId: auth.user.id, action: "CREATE", entityType: "Student", entityId: created.id, newData: created } });
+      await tx.auditLog.create({ data: { userId: auth.user.id, action: "CREATE", entityType: "Student", entityId: created.id, newData: created, ipAddress: getClientIp(request) } });
       return created;
     });
     return NextResponse.json({ data: student }, { status: 201, headers: noStoreHeaders });

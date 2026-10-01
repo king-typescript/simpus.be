@@ -7,6 +7,7 @@ import {
   createAuthToken,
   noStoreHeaders,
 } from "@/lib/auth";
+import { getClientIp, isJsonContentType, isRecord } from "@/lib/validation";
 
 export const runtime = "nodejs";
 
@@ -15,15 +16,14 @@ const SERVER_ERROR = "Terjadi kesalahan pada server.";
 const DUMMY_PASSWORD_HASH =
   "$argon2id$v=19$m=65536,p=4,t=3$WNXtRUBVPKJd0ntXbRHsaA$37u7VFDdU7kTjPe9/olF+O8r1vsnAnEXBBnExV2Dw4k";
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 function errorResponse(message: string, status: number) {
   return NextResponse.json({ error: message }, { status, headers: noStoreHeaders });
 }
 
 export async function POST(request: Request) {
+  if (!isJsonContentType(request)) {
+    return errorResponse("Content-Type harus application/json.", 415);
+  }
   let body: unknown;
 
   try {
@@ -42,6 +42,8 @@ export async function POST(request: Request) {
   if (!username || !password || username.length > 100 || password.length > 256) {
     return errorResponse(INVALID_CREDENTIALS, 401);
   }
+
+  const ip = getClientIp(request);
 
   try {
     const user = await prisma.user.findUnique({
@@ -62,13 +64,20 @@ export async function POST(request: Request) {
     );
 
     if (!user || user.status !== "AKTIF" || !passwordMatches) {
+      // ponytail: fire-and-forget audit for failed login; acceptable to lose on crash
+      prisma.auditLog.create({ data: { userId: user?.id ?? null, action: "LOGIN_FAILED", entityType: "User", entityId: user?.id ?? null, newData: { username }, ipAddress: ip } }).catch(() => {});
       return errorResponse(INVALID_CREDENTIALS, 401);
     }
 
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { lastLoginAt: new Date() },
-    });
+    await prisma.$transaction([
+      prisma.user.update({
+        where: { id: user.id },
+        data: { lastLoginAt: new Date() },
+      }),
+      prisma.auditLog.create({
+        data: { userId: user.id, action: "LOGIN_SUCCESS", entityType: "User", entityId: user.id, ipAddress: ip },
+      }),
+    ]);
 
     const token = await createAuthToken({
       userId: user.id,

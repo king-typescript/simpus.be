@@ -1,33 +1,27 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { noStoreHeaders, requireAuthenticatedUser, requireLibrarian } from "@/lib/auth";
+import {
+  getClientIp,
+  hasOnlyFields,
+  isJsonContentType,
+  isRecord,
+  isUuid,
+  parseEnum,
+  parsePagination,
+  parseSearch,
+  parseOptionalString,
+} from "@/lib/validation";
 
 export const runtime = "nodejs";
-const DEFAULT_LIMIT = 20;
-const MAX_LIMIT = 100;
-const MAX_PAGE = 10_000;
 const statuses = ["TERSEDIA", "DIPINJAM", "RUSAK", "HILANG"] as const;
 
-type CopyStatus = (typeof statuses)[number];
 
 function errorResponse(error: string, status: number) {
   return NextResponse.json({ error }, { status, headers: noStoreHeaders });
 }
-function uuid(value: unknown): value is string {
-  return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
-}
-function record(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-function integer(value: string | null, fallback: number, max: number) {
-  const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed > 0 && parsed <= max ? parsed : fallback;
-}
 function jsonValue(value: unknown) {
   return JSON.parse(JSON.stringify(value));
-}
-function onlyFields(value: Record<string, unknown>, allowed: readonly string[]) {
-  return Object.keys(value).every((key) => allowed.includes(key));
 }
 function validBarcode(value: string) {
   return /^[A-Z0-9-]{3,100}$/.test(value);
@@ -56,22 +50,26 @@ export async function GET(request: Request) {
   const auth = await requireAuthenticatedUser();
   if (!auth.ok) return errorResponse("Autentikasi diperlukan.", 401);
   const url = new URL(request.url);
-  const page = integer(url.searchParams.get("page"), 1, MAX_PAGE);
-  const limit = integer(url.searchParams.get("limit"), DEFAULT_LIMIT, MAX_LIMIT);
+  const pagination = parsePagination(url.searchParams);
+  if (!pagination.ok) return errorResponse(pagination.error, 422);
+  const searchResult = parseSearch(url.searchParams);
+  if (!searchResult.ok) return errorResponse(searchResult.error, 422);
+  const { page, limit } = pagination.value;
   const bookId = url.searchParams.get("bookId")?.trim() ?? "";
   const shelfId = url.searchParams.get("shelfId")?.trim() ?? "";
-  const search = url.searchParams.get("search")?.trim() ?? "";
+  const search = searchResult.value;
   const status = url.searchParams.get("status")?.trim() ?? "";
+  const statusResult = status ? parseEnum(status, statuses, "Status salinan buku") : null;
 
-  if ((bookId && !uuid(bookId)) || (shelfId && !uuid(shelfId))) return errorResponse("ID filter tidak valid.", 422);
-  if (status && !statuses.includes(status as CopyStatus)) return errorResponse("Status salinan buku tidak valid.", 422);
+  if ((bookId && !isUuid(bookId)) || (shelfId && !isUuid(shelfId))) return errorResponse("ID filter tidak valid.", 422);
+  if (statusResult && !statusResult.ok) return errorResponse(statusResult.error, 422);
 
   const where = {
     isActive: true,
     book: { isActive: true, category: { is: { isActive: true } } },
     ...(bookId ? { bookId } : {}),
     ...(shelfId ? { shelfId } : {}),
-    ...(status ? { status: status as CopyStatus } : {}),
+    ...(statusResult?.ok ? { status: statusResult.value } : {}),
     ...(search ? { OR: [
       { barcode: { contains: search, mode: "insensitive" as const } },
       { book: { title: { contains: search, mode: "insensitive" as const } } },
@@ -92,17 +90,19 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const auth = await requireLibrarian();
   if (!auth.ok) return errorResponse("Tidak memiliki akses.", auth.status);
+  if (!isJsonContentType(request)) return errorResponse("Content-Type harus application/json.", 415);
   let body: unknown;
   try { body = await request.json(); } catch { return errorResponse("Body JSON tidak valid.", 400); }
-  if (!record(body) || !onlyFields(body, ["bookId", "shelfId", "barcode", "conditionNote", "acquiredAt"])) return errorResponse("Body request tidak valid.", 422);
+  if (!isRecord(body) || !hasOnlyFields(body, ["bookId", "shelfId", "barcode", "conditionNote", "acquiredAt"])) return errorResponse("Body request tidak valid.", 422);
 
   const bookId = body.bookId;
   const shelfId = body.shelfId === null || body.shelfId === undefined ? null : body.shelfId;
   const barcode = typeof body.barcode === "string" ? body.barcode.trim().toUpperCase() : "";
-  const conditionNote = body.conditionNote === null || body.conditionNote === undefined ? null : typeof body.conditionNote === "string" ? body.conditionNote.trim() || null : undefined;
+  const noteResult = parseOptionalString(body.conditionNote, { field: "Catatan kondisi", maxLength: 1000 });
   const acquiredAt = parseDate(body.acquiredAt);
 
-  if (!uuid(bookId) || (shelfId !== null && !uuid(shelfId)) || !validBarcode(barcode) || conditionNote === undefined || (conditionNote !== null && conditionNote.length > 1000) || acquiredAt === undefined) return errorResponse("Data salinan buku tidak valid.", 422);
+  if (!isUuid(bookId) || (shelfId !== null && !isUuid(shelfId)) || !validBarcode(barcode) || !noteResult.ok || acquiredAt === undefined) return errorResponse("Data salinan buku tidak valid.", 422);
+  const conditionNote = noteResult.value ?? null;
 
   try {
     const copy = await prisma.$transaction(async (tx) => {
@@ -110,7 +110,7 @@ export async function POST(request: Request) {
       if (!book) throw new Error("BOOK_NOT_FOUND");
       if (shelfId && !(await tx.shelf.findUnique({ where: { id: shelfId }, select: { id: true } }))) throw new Error("SHELF_NOT_FOUND");
       const created = await tx.bookCopy.create({ data: { bookId, shelfId, barcode, status: "TERSEDIA", isActive: true, conditionNote, acquiredAt }, select: librarianSelect });
-      await tx.auditLog.create({ data: { userId: auth.user.id, action: "CREATE", entityType: "BookCopy", entityId: created.id, newData: jsonValue(created) } });
+      await tx.auditLog.create({ data: { userId: auth.user.id, action: "CREATE", entityType: "BookCopy", entityId: created.id, newData: jsonValue(created), ipAddress: getClientIp(request) } });
       return created;
     });
     return NextResponse.json({ data: copy }, { status: 201, headers: noStoreHeaders });

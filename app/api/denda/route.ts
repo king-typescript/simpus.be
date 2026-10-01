@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { FineStatus, Prisma } from "@/app/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 import { noStoreHeaders, requireLibrarian } from "@/lib/auth";
+import { parsePagination, parseSearch } from "@/lib/validation";
 
 export const runtime = "nodejs";
 
@@ -10,11 +11,6 @@ const MAX_LIMIT = 100;
 const MAX_PAGE = 10_000;
 function errorResponse(error: string, status: number) {
   return NextResponse.json({ error }, { status, headers: noStoreHeaders });
-}
-
-function integer(value: string | null, fallback: number, max: number) {
-  const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed > 0 && parsed <= max ? parsed : fallback;
 }
 
 const fineSelect = {
@@ -79,16 +75,21 @@ export async function GET(request: Request) {
   if (!auth.ok) return errorResponse("Tidak memiliki akses.", auth.status);
 
   const url = new URL(request.url);
-  const page = integer(url.searchParams.get("page"), 1, MAX_PAGE);
-  const limit = integer(url.searchParams.get("limit"), DEFAULT_LIMIT, MAX_LIMIT);
+  const pagination = parsePagination(url.searchParams, {
+    defaultLimit: DEFAULT_LIMIT,
+    maxLimit: MAX_LIMIT,
+    maxPage: MAX_PAGE,
+  });
+  if (!pagination.ok) return errorResponse(pagination.error, 422);
+  const { page, limit } = pagination.value;
   const status = url.searchParams.get("status");
-  const search = url.searchParams.get("search")?.trim() ?? "";
+  const searchResult = parseSearch(url.searchParams, 100);
+  if (!searchResult.ok) return errorResponse("Pencarian terlalu panjang.", 422);
+  const search = searchResult.value;
 
   if (status && !Object.values(FineStatus).includes(status as FineStatus)) {
     return errorResponse("Status denda tidak valid.", 422);
   }
-  if (search.length > 100) return errorResponse("Pencarian terlalu panjang.", 422);
-
   const where = {
     ...(status ? { status: status as FineStatus } : {}),
     ...(search

@@ -1,36 +1,24 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { noStoreHeaders, requireAuthenticatedUser, requireLibrarian } from "@/lib/auth";
+import {
+  getClientIp,
+  hasOnlyFields,
+  isJsonContentType,
+  isRecord,
+  isUuid,
+  normalizeText,
+  parseEnum,
+  parseHttpsUrl,
+  parseOptionalString,
+  parsePagination,
+  parseRequiredString,
+  parseSearch,
+} from "@/lib/validation";
 
 export const runtime = "nodejs";
-const DEFAULT_LIMIT = 20;
-const MAX_LIMIT = 100;
-
 function errorResponse(error: string, status: number) {
   return NextResponse.json({ error }, { status, headers: noStoreHeaders });
-}
-
-function uuid(value: unknown): value is string {
-  return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
-}
-
-function record(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function integer(value: string | null, fallback: number, maximum = 1000) {
-  const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed > 0 && parsed <= maximum ? parsed : fallback;
-}
-
-function validCoverUrl(value: string | null) {
-  if (value === null) return true;
-
-  try {
-    return new URL(value).protocol === "https:";
-  } catch {
-    return false;
-  }
 }
 
 function jsonValue(value: unknown) {
@@ -51,23 +39,26 @@ export async function GET(request: Request) {
   if (!auth.ok) return errorResponse("Autentikasi diperlukan.", 401);
 
   const url = new URL(request.url);
-  const page = integer(url.searchParams.get("page"), 1, 10000);
-  const limit = Math.min(integer(url.searchParams.get("limit"), DEFAULT_LIMIT, MAX_LIMIT), MAX_LIMIT);
-  const search = url.searchParams.get("search")?.trim() ?? "";
+  const pagination = parsePagination(url.searchParams);
+  if (!pagination.ok) return errorResponse(pagination.error, 422);
+  const searchResult = parseSearch(url.searchParams);
+  if (!searchResult.ok) return errorResponse(searchResult.error, 422);
+  const { page, limit } = pagination.value;
+  const search = searchResult.value;
   const categoryId = url.searchParams.get("categoryId")?.trim() ?? "";
   const authorId = url.searchParams.get("authorId")?.trim() ?? "";
   const status = url.searchParams.get("status")?.trim() ?? "";
-  const statuses = ["TERSEDIA", "DIPINJAM", "RUSAK", "HILANG"] as const;
+  const statusResult = status ? parseEnum(status, ["TERSEDIA", "DIPINJAM", "RUSAK", "HILANG"] as const, "Status buku") : null;
 
-  if ((categoryId && !uuid(categoryId)) || (authorId && !uuid(authorId))) return errorResponse("ID filter tidak valid.", 422);
-  if (status && !statuses.includes(status as (typeof statuses)[number])) return errorResponse("Status buku tidak valid.", 422);
+  if ((categoryId && !isUuid(categoryId)) || (authorId && !isUuid(authorId))) return errorResponse("ID filter tidak valid.", 422);
+  if (statusResult && !statusResult.ok) return errorResponse(statusResult.error, 422);
 
   const where = {
     isActive: true,
     category: { is: { isActive: true } },
     ...(categoryId ? { categoryId } : {}),
     ...(authorId ? { authors: { some: { id: authorId } } } : {}),
-    ...(status ? { copies: { some: { status: status as (typeof statuses)[number] } } } : {}),
+    ...(statusResult?.ok ? { copies: { some: { status: statusResult.value } } } : {}),
     ...(search ? { OR: [
       { title: { contains: search, mode: "insensitive" as const } },
       { isbn: { contains: search, mode: "insensitive" as const } },
@@ -95,36 +86,28 @@ export async function POST(request: Request) {
   const auth = await requireLibrarian();
   if (!auth.ok) return errorResponse("Tidak memiliki akses.", auth.status);
 
+  if (!isJsonContentType(request)) return errorResponse("Content-Type harus application/json.", 415);
   let body: unknown;
   try { body = await request.json(); } catch { return errorResponse("Body JSON tidak valid.", 400); }
-  if (!record(body)) return errorResponse("Body request tidak valid.", 422);
+  if (!isRecord(body) || !hasOnlyFields(body, ["isbn", "title", "publisher", "publicationYear", "edition", "description", "coverUrl", "categoryId", "authorIds"])) return errorResponse("Body request tidak valid.", 422);
 
-  const title = typeof body.title === "string" ? body.title.trim() : "";
-  const isbn = typeof body.isbn === "string" && body.isbn.trim() ? body.isbn.trim() : null;
-  const publisher = typeof body.publisher === "string" && body.publisher.trim() ? body.publisher.trim() : null;
-  const edition = typeof body.edition === "string" && body.edition.trim() ? body.edition.trim() : null;
-  const description = typeof body.description === "string" && body.description.trim() ? body.description.trim() : null;
-  const coverUrl = typeof body.coverUrl === "string" && body.coverUrl.trim() ? body.coverUrl.trim() : null;
+  const titleResult = parseRequiredString(body.title, { field: "Judul", maxLength: 300 });
+  const isbn = body.isbn === undefined || body.isbn === null ? null : typeof body.isbn === "string" ? normalizeText(body.isbn) || null : undefined;
+  const publisherResult = parseOptionalString(body.publisher, { field: "Penerbit", maxLength: 200 });
+  const editionResult = parseOptionalString(body.edition, { field: "Edisi", maxLength: 100 });
+  const descriptionResult = parseOptionalString(body.description, { field: "Deskripsi", maxLength: 5000 });
+  const coverResult = parseHttpsUrl(body.coverUrl, "URL sampul");
   const categoryId = body.categoryId;
   const authorIds = body.authorIds;
   const publicationYear = body.publicationYear === undefined || body.publicationYear === null ? null : body.publicationYear;
-  const validYear = publicationYear === null || (typeof publicationYear === "number" && Number.isInteger(publicationYear) && publicationYear >= 1000 && publicationYear <= new Date().getFullYear() + 1);
+  const validYear = publicationYear === null || (typeof publicationYear === "number" && Number.isSafeInteger(publicationYear) && publicationYear >= 1000 && publicationYear <= new Date().getFullYear() + 1);
 
-  if (
-    !title ||
-    title.length > 300 ||
-    (isbn !== null && (isbn.length > 20 || !/^[0-9Xx-]{10,17}$/.test(isbn))) ||
-    (publisher !== null && publisher.length > 200) ||
-    (edition !== null && edition.length > 100) ||
-    (description !== null && description.length > 5000) ||
-    (coverUrl !== null && (coverUrl.length > 2048 || !validCoverUrl(coverUrl))) ||
-    !uuid(categoryId) ||
-    !Array.isArray(authorIds) ||
-    !authorIds.length ||
-    authorIds.length > 20 ||
-    !authorIds.every(uuid) ||
-    !validYear
-  ) return errorResponse("Data buku tidak valid.", 422);
+  if (!titleResult.ok || !publisherResult.ok || !editionResult.ok || !descriptionResult.ok || !coverResult.ok || isbn === undefined || (isbn !== null && (isbn.length > 20 || !/^[0-9Xx-]{10,17}$/.test(isbn))) || !isUuid(categoryId) || !Array.isArray(authorIds) || !authorIds.length || authorIds.length > 20 || !authorIds.every(isUuid) || !validYear) return errorResponse("Data buku tidak valid.", 422);
+  const title = titleResult.value;
+  const publisher = publisherResult.value ?? null;
+  const edition = editionResult.value ?? null;
+  const description = descriptionResult.value ?? null;
+  const coverUrl = coverResult.value;
   const uniqueAuthorIds = [...new Set(authorIds)];
 
   try {
@@ -136,7 +119,7 @@ export async function POST(request: Request) {
       if (!category) throw new Error("CATEGORY_NOT_FOUND");
       if (authors.length !== uniqueAuthorIds.length) throw new Error("AUTHOR_NOT_FOUND");
       const book = await tx.book.create({ data: { isbn, title, publisher, publicationYear, edition, description, coverUrl, categoryId, authors: { connect: uniqueAuthorIds.map((id) => ({ id })) } }, select: bookSelect });
-      await tx.auditLog.create({ data: { userId: auth.user.id, action: "CREATE", entityType: "Book", entityId: book.id, newData: jsonValue(book) } });
+      await tx.auditLog.create({ data: { userId: auth.user.id, action: "CREATE", entityType: "Book", entityId: book.id, newData: jsonValue(book), ipAddress: getClientIp(request) } });
       return book;
     });
     return NextResponse.json({ data }, { status: 201, headers: noStoreHeaders });

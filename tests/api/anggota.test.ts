@@ -200,26 +200,21 @@ describe("GET /api/anggota", () => {
   });
 
   it.each(["0", "-1", "1.5", "NaN", "invalid"])(
-    "uses default pagination for invalid value %s",
+    "rejects invalid pagination %s",
     async (value) => {
-      await GET(
-        request(
-          "GET",
-          `http://localhost/api/anggota?page=${value}&limit=${value}`,
-        ),
-      );
-
-      expect(mocks.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ skip: 0, take: 20 }),
+      await expectJsonError(
+        await GET(request("GET", `http://localhost/api/anggota?page=${value}&limit=${value}`)),
+        422,
+        "Parameter page tidak valid.",
       );
     },
   );
 
-  it("caps limit at 100", async () => {
-    await GET(request("GET", "http://localhost/api/anggota?page=2&limit=999"));
-
-    expect(mocks.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ skip: 100, take: 100 }),
+  it("rejects oversized limit", async () => {
+    await expectJsonError(
+      await GET(request("GET", "http://localhost/api/anggota?page=2&limit=999")),
+      422,
+      "Parameter limit tidak valid.",
     );
   });
 
@@ -448,6 +443,7 @@ describe("POST /api/anggota", () => {
         entityType: "Student",
         entityId: studentId,
         newData: student,
+        ipAddress: null,
       },
     });
   });

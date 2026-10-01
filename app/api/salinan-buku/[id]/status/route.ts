@@ -1,6 +1,15 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { noStoreHeaders, requireLibrarian } from "@/lib/auth";
+import {
+  getClientIp,
+  hasOnlyFields,
+  isJsonContentType,
+  isRecord,
+  isUuid,
+  parseEnum,
+  parseOptionalString,
+} from "@/lib/validation";
 
 export const runtime = "nodejs";
 
@@ -16,15 +25,6 @@ const allowedTransitions: Record<AdministrativeStatus | "DIPINJAM", readonly Adm
 
 function errorResponse(error: string, status: number) {
   return NextResponse.json({ error }, { status, headers: noStoreHeaders });
-}
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-function isUuid(value: unknown): value is string {
-  return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
-}
-function isAdministrativeStatus(value: unknown): value is AdministrativeStatus {
-  return value === "TERSEDIA" || value === "RUSAK" || value === "HILANG";
 }
 function jsonValue(value: unknown) {
   return JSON.parse(JSON.stringify(value));
@@ -71,6 +71,7 @@ export async function POST(request: Request, context: RouteContext) {
 
   const { id } = await context.params;
   if (!isUuid(id)) return errorResponse("ID salinan buku tidak valid.", 422);
+  if (!isJsonContentType(request)) return errorResponse("Content-Type harus application/json.", 415);
 
   let body: unknown;
   try {
@@ -79,29 +80,17 @@ export async function POST(request: Request, context: RouteContext) {
     return errorResponse("Body JSON tidak valid.", 400);
   }
 
-  if (!isRecord(body) || Object.keys(body).some((key) => !["status", "conditionNote"].includes(key))) {
+  if (!isRecord(body) || !hasOnlyFields(body, ["status", "conditionNote"])) {
     return errorResponse("Body request tidak valid.", 422);
   }
 
-  const requestedStatus = body.status;
-  if (!isAdministrativeStatus(requestedStatus)) {
-    return errorResponse("Status administratif tidak valid.", 422);
-  }
+  const statusResult = parseEnum(body.status, ["TERSEDIA", "RUSAK", "HILANG"] as const, "Status administratif");
+  if (!statusResult.ok) return errorResponse(statusResult.error, 422);
+  const requestedStatus = statusResult.value;
 
-  let conditionNote: string | null | undefined;
-  if (body.conditionNote === undefined) {
-    conditionNote = undefined;
-  } else if (body.conditionNote === null) {
-    conditionNote = null;
-  } else if (typeof body.conditionNote === "string") {
-    conditionNote = body.conditionNote.trim() || null;
-  } else {
-    return errorResponse("Catatan kondisi tidak valid.", 422);
-  }
-
-  if (conditionNote !== undefined && conditionNote !== null && conditionNote.length > 1000) {
-    return errorResponse("Catatan kondisi terlalu panjang.", 422);
-  }
+  const noteResult = parseOptionalString(body.conditionNote, { field: "Catatan kondisi", maxLength: 1000 });
+  if (!noteResult.ok) return errorResponse(noteResult.error, 422);
+  const conditionNote = noteResult.value;
 
   try {
     const updated = await runSerializable(() => prisma.$transaction(async (tx) => {
@@ -154,6 +143,7 @@ export async function POST(request: Request, context: RouteContext) {
           entityId: id,
           oldData: jsonValue(current),
           newData: jsonValue(updatedCopy),
+          ipAddress: getClientIp(request),
         },
       });
 

@@ -1,6 +1,15 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { noStoreHeaders, requireAuthenticatedUser, requireLibrarian } from "@/lib/auth";
+import {
+  getClientIp,
+  hasOnlyFields,
+  isJsonContentType,
+  isRecord,
+  isUuid,
+  parseOptionalString,
+  parseRequiredString,
+} from "@/lib/validation";
 
 export const runtime = "nodejs";
 type RouteContext = { params: Promise<{ id: string }> };
@@ -12,26 +21,8 @@ const MAX_LOCATION_LENGTH = 200;
 function errorResponse(error: string, status: number) {
   return NextResponse.json({ error }, { status, headers: noStoreHeaders });
 }
-function isUuid(value: unknown): value is string {
-  return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
-}
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-function hasOnlyFields(value: Record<string, unknown>, fields: readonly string[]) {
-  return Object.keys(value).every((key) => fields.includes(key));
-}
-function normalizeText(value: string) {
-  return value.replace(/\s+/g, " ").trim();
-}
 function jsonValue(value: unknown) {
   return JSON.parse(JSON.stringify(value));
-}
-function clientIp(request: Request) {
-  return request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || request.headers.get("x-real-ip") || null;
-}
-function acceptsJson(request: Request) {
-  return request.headers.get("content-type")?.toLowerCase().startsWith("application/json") ?? false;
 }
 async function readJson(request: Request): Promise<{ ok: true; body: unknown } | { ok: false; response: Response }> {
   const contentLength = Number(request.headers.get("content-length"));
@@ -76,7 +67,7 @@ export async function PATCH(request: Request, context: RouteContext) {
   if (!auth.ok) return errorResponse("Tidak memiliki akses.", auth.status);
   const { id } = await context.params;
   if (!isUuid(id)) return errorResponse("ID rak tidak valid.", 422);
-  if (!acceptsJson(request)) return errorResponse("Content-Type harus application/json.", 415);
+  if (!isJsonContentType(request)) return errorResponse("Content-Type harus application/json.", 415);
 
   const parsed = await readJson(request);
   if (!parsed.ok) return parsed.response;
@@ -84,22 +75,19 @@ export async function PATCH(request: Request, context: RouteContext) {
 
   const data: { code?: string; name?: string; location?: string | null } = {};
   if ("code" in parsed.body) {
-    if (typeof parsed.body.code !== "string") return errorResponse("Kode rak tidak valid.", 422);
-    const code = normalizeText(parsed.body.code).toUpperCase();
-    if (!code || code.length > MAX_CODE_LENGTH || !/^[A-Z0-9][A-Z0-9._/-]*$/.test(code)) return errorResponse("Kode rak tidak valid.", 422);
-    data.code = code;
+    const result = parseRequiredString(parsed.body.code, { field: "Kode rak", maxLength: MAX_CODE_LENGTH });
+    if (!result.ok || !/^[A-Z0-9][A-Z0-9._/-]*$/.test(result.value.toUpperCase())) return errorResponse("Kode rak tidak valid.", 422);
+    data.code = result.value.toUpperCase();
   }
   if ("name" in parsed.body) {
-    if (typeof parsed.body.name !== "string") return errorResponse("Nama rak tidak valid.", 422);
-    const name = normalizeText(parsed.body.name);
-    if (!name || name.length > MAX_NAME_LENGTH) return errorResponse("Nama rak tidak valid.", 422);
-    data.name = name;
+    const result = parseRequiredString(parsed.body.name, { field: "Nama rak", maxLength: MAX_NAME_LENGTH });
+    if (!result.ok) return errorResponse(result.error, 422);
+    data.name = result.value;
   }
   if ("location" in parsed.body) {
-    if (parsed.body.location !== null && typeof parsed.body.location !== "string") return errorResponse("Lokasi rak tidak valid.", 422);
-    const location = typeof parsed.body.location === "string" ? normalizeText(parsed.body.location) : null;
-    if (location !== null && location.length > MAX_LOCATION_LENGTH) return errorResponse("Lokasi rak terlalu panjang.", 422);
-    data.location = location || null;
+    const result = parseOptionalString(parsed.body.location, { field: "Lokasi rak", maxLength: MAX_LOCATION_LENGTH });
+    if (!result.ok) return errorResponse(result.error, 422);
+    data.location = result.value ?? null;
   }
   if (!Object.keys(data).length) return errorResponse("Tidak ada perubahan.", 422);
 
@@ -110,7 +98,7 @@ export async function PATCH(request: Request, context: RouteContext) {
       const unchanged = (data.code === undefined || data.code === current.code) && (data.name === undefined || data.name === current.name) && (data.location === undefined || data.location === current.location);
       if (unchanged) return current;
       const updated = await tx.shelf.update({ where: { id }, data, select: shelfSelect });
-      await tx.auditLog.create({ data: { userId: auth.user.id, action: "UPDATE", entityType: "Shelf", entityId: id, oldData: jsonValue(current), newData: jsonValue(updated), ipAddress: clientIp(request) } });
+      await tx.auditLog.create({ data: { userId: auth.user.id, action: "UPDATE", entityType: "Shelf", entityId: id, oldData: jsonValue(current), newData: jsonValue(updated), ipAddress: getClientIp(request) } });
       return updated;
     });
     return shelf ? NextResponse.json({ data: toShelfResponse(shelf) }, { headers: noStoreHeaders }) : errorResponse("Rak tidak ditemukan.", 404);
@@ -134,7 +122,7 @@ export async function DELETE(request: Request, context: RouteContext) {
       if (!shelf) return false;
       if (shelf._count.copies > 0) throw new Error("SHELF_HAS_COPIES");
       await tx.shelf.delete({ where: { id } });
-      await tx.auditLog.create({ data: { userId: auth.user.id, action: "DELETE", entityType: "Shelf", entityId: id, oldData: jsonValue(shelf), ipAddress: clientIp(request) } });
+      await tx.auditLog.create({ data: { userId: auth.user.id, action: "DELETE", entityType: "Shelf", entityId: id, oldData: jsonValue(shelf), ipAddress: getClientIp(request) } });
       return true;
     }, { isolationLevel: "Serializable" });
     return deleted ? new NextResponse(null, { status: 204 }) : errorResponse("Rak tidak ditemukan.", 404);

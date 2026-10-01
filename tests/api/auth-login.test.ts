@@ -4,6 +4,8 @@ const mocks = vi.hoisted(() => ({
   verify: vi.fn(),
   findUnique: vi.fn(),
   update: vi.fn(),
+  auditCreate: vi.fn(),
+  transaction: vi.fn(),
   createAuthToken: vi.fn(),
 }));
 
@@ -17,6 +19,8 @@ vi.mock("@/lib/prisma", () => ({
       findUnique: mocks.findUnique,
       update: mocks.update,
     },
+    auditLog: { create: mocks.auditCreate },
+    $transaction: mocks.transaction,
   },
 }));
 
@@ -64,6 +68,8 @@ beforeEach(() => {
   mocks.findUnique.mockResolvedValue(activeUser);
   mocks.verify.mockResolvedValue(true);
   mocks.update.mockResolvedValue({});
+  mocks.auditCreate.mockResolvedValue({});
+  mocks.transaction.mockImplementation((operations: unknown[]) => Promise.all(operations));
 });
 
 describe("POST /api/auth/login", () => {
@@ -172,6 +178,17 @@ describe("POST /api/auth/login", () => {
     );
 
     expect(response.status).toBe(200);
+  });
+
+  it("rejects a non-JSON content type", async () => {
+    const response = await POST(new Request("http://localhost/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "text/plain" },
+      body: JSON.stringify({ username: "librarian", password: "correct-password" }),
+    }));
+
+    await expectJsonError(response, 415, "Content-Type harus application/json.");
+    expect(mocks.findUnique).not.toHaveBeenCalled();
   });
 
   it("returns authenticated user and sets auth cookie", async () => {

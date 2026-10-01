@@ -56,7 +56,7 @@ describe("GET /api/buku", () => {
 
 describe("POST /api/buku", () => {
   it.each([401, 403])("requires librarian: %s", async status => { mocks.librarian.mockResolvedValue({ ok: false, status }); await error(await listRoute.POST(req("POST", undefined, valid())), status, "Tidak memiliki akses."); });
-  it("rejects malformed and non-object bodies", async () => { const malformed = new Request("http://localhost/api/buku", { method: "POST", body: "{" }); await error(await listRoute.POST(malformed), 400, "Body JSON tidak valid."); for (const body of [null, [], "x", 1]) await error(await listRoute.POST(req("POST", undefined, body)), 422, "Body request tidak valid."); });
+  it("rejects malformed and non-object bodies", async () => { const malformed = new Request("http://localhost/api/buku", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{" }); await error(await listRoute.POST(malformed), 400, "Body JSON tidak valid."); for (const body of [null, [], "x", 1]) await error(await listRoute.POST(req("POST", undefined, body)), 422, "Body request tidak valid."); });
   it.each([valid({ title: "" }), valid({ title: "x".repeat(301) }), valid({ categoryId: "bad" }), valid({ authorIds: [] }), valid({ authorIds: ["bad"] }), valid({ isbn: "bad" }), valid({ coverUrl: "http://example.com/x" }), valid({ publicationYear: 999 })])("rejects invalid data", async body => { await error(await listRoute.POST(req("POST", undefined, body)), 422, "Data buku tidak valid."); });
   it("deduplicates author IDs before persistence", async () => {
     const response = await listRoute.POST(req("POST", undefined, valid({ authorIds: [authorId, authorId] })));
@@ -84,6 +84,6 @@ describe("PATCH /api/buku/[id]", () => {
 });
 
 describe("DELETE /api/buku/[id]", () => {
-  it("deactivates active book and writes audit log", async () => { const response = await detailRoute.DELETE(req("DELETE"), ctx()); expect(response.status).toBe(204); expect(await response.text()).toBe(""); expect(mocks.findFirst).toHaveBeenCalledWith({ where: { id: bookId, isActive: true }, select: { id: true } }); expect(mocks.update).toHaveBeenCalledWith({ where: { id: bookId }, data: { isActive: false } }); expect(mocks.audit).toHaveBeenCalledWith({ data: { userId: librarian.id, action: "DEACTIVATE", entityType: "Book", entityId: bookId } }); });
+  it("deactivates active book and writes audit log", async () => { const response = await detailRoute.DELETE(req("DELETE"), ctx()); expect(response.status).toBe(204); expect(await response.text()).toBe(""); expect(mocks.findFirst).toHaveBeenCalledWith({ where: { id: bookId, isActive: true }, select: expect.any(Object) }); expect(mocks.update).toHaveBeenCalledWith({ where: { id: bookId }, data: { isActive: false } }); expect(mocks.audit).toHaveBeenCalledWith({ data: expect.objectContaining({ userId: librarian.id, action: "DEACTIVATE", entityType: "Book", entityId: bookId, oldData: expect.any(Object), newData: expect.any(Object), ipAddress: null }) }); });
   it("returns 404 for missing book and 500 on failure", async () => { mocks.findFirst.mockResolvedValue(null); await error(await detailRoute.DELETE(req("DELETE"), ctx()), 404, "Buku tidak ditemukan."); mocks.transaction.mockRejectedValue(new Error("DB")); await error(await detailRoute.DELETE(req("DELETE"), ctx()), 500, "Terjadi kesalahan pada server."); });
 });
