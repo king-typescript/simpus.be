@@ -1,3 +1,5 @@
+import { isValidTimeZone } from "@/lib/date";
+
 export type ValidationResult<T> =
   | { ok: true; value: T }
   | { ok: false; error: string };
@@ -167,6 +169,252 @@ export function parseSearch(
   }
 
   return { ok: true, value: search };
+}
+
+export const REPORT_PERIODS = [
+  "today",
+  "week",
+  "month",
+] as const;
+
+export type ReportPeriod = (typeof REPORT_PERIODS)[number];
+
+export const REPORT_EXPORT_FORMATS = [
+  "csv",
+  "xlsx",
+] as const;
+
+export type ReportExportFormat =
+  (typeof REPORT_EXPORT_FORMATS)[number];
+
+export function parseReportExportFormat(
+  searchParams: URLSearchParams,
+): ValidationResult<ReportExportFormat> {
+  const rawFormat = searchParams.get("format")?.trim() ?? "";
+
+  if (!REPORT_EXPORT_FORMATS.includes(rawFormat as ReportExportFormat)) {
+    return {
+      ok: false,
+      error: "Parameter format tidak valid.",
+    };
+  }
+
+  return {
+    ok: true,
+    value: rawFormat as ReportExportFormat,
+  };
+}
+
+export type ReportDateRange = {
+  period: ReportPeriod;
+  timeZone: string;
+  fromDate: string;
+  toDate: string;
+  from: Date;
+  toExclusive: Date;
+};
+
+export function parseReportTimeZone(
+  searchParams: URLSearchParams,
+): ValidationResult<string> {
+  const timeZone = searchParams.get("timeZone")?.trim() ?? "";
+
+  if (!timeZone) {
+    return { ok: false, error: "Parameter timeZone wajib diisi." };
+  }
+
+  if (!isValidTimeZone(timeZone)) {
+    return { ok: false, error: "Parameter timeZone tidak valid." };
+  }
+
+  return { ok: true, value: timeZone };
+}
+
+function getDateParts(
+  date: Date,
+  timeZone: string,
+): { year: number; month: number; day: number } {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+
+  const values = Object.fromEntries(
+    parts
+      .filter(({ type }) => type !== "literal")
+      .map(({ type, value }) => [type, Number(value)]),
+  );
+
+  return {
+    year: values.year,
+    month: values.month,
+    day: values.day,
+  };
+}
+
+function formatDateParts(year: number, month: number, day: number): string {
+  return [
+    year.toString().padStart(4, "0"),
+    month.toString().padStart(2, "0"),
+    day.toString().padStart(2, "0"),
+  ].join("-");
+}
+
+function addDays(date: Date, days: number): Date {
+  const result = new Date(date);
+  result.setUTCDate(result.getUTCDate() + days);
+  return result;
+}
+
+function getReportDateStrings(
+  period: ReportPeriod,
+  timeZone: string,
+  now: Date,
+): { fromDate: string; toDate: string } {
+  const today = getDateParts(now, timeZone);
+  const todayUtc = new Date(
+    Date.UTC(today.year, today.month - 1, today.day),
+  );
+
+  let from = todayUtc;
+  let to = todayUtc;
+
+  if (period === "week") {
+    const dayOfWeek = todayUtc.getUTCDay();
+    const daysSinceMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+
+    from = addDays(todayUtc, -daysSinceMonday);
+    to = addDays(from, 6);
+  } else if (period === "month") {
+    from = new Date(Date.UTC(today.year, today.month - 1, 1));
+    to = new Date(Date.UTC(today.year, today.month, 0));
+  }
+
+  return {
+    fromDate: formatDateParts(
+      from.getUTCFullYear(),
+      from.getUTCMonth() + 1,
+      from.getUTCDate(),
+    ),
+    toDate: formatDateParts(
+      to.getUTCFullYear(),
+      to.getUTCMonth() + 1,
+      to.getUTCDate(),
+    ),
+  };
+}
+
+function getTimeZoneOffsetMilliseconds(date: Date, timeZone: string): number {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    hourCycle: "h23",
+    minute: "2-digit",
+    second: "2-digit",
+  }).formatToParts(date);
+
+  const values = Object.fromEntries(
+    parts
+      .filter(({ type }) => type !== "literal")
+      .map(({ type, value }) => [type, Number(value)]),
+  );
+
+  const localTimeAsUtc = Date.UTC(
+    values.year,
+    values.month - 1,
+    values.day,
+    values.hour,
+    values.minute,
+    values.second,
+  );
+
+  return localTimeAsUtc - date.getTime();
+}
+
+function localDateStartToUtc(date: string, timeZone: string): Date {
+  const [year, month, day] = date.split("-").map(Number);
+  const localTimeAsUtc = Date.UTC(year, month - 1, day);
+  let result = new Date(localTimeAsUtc);
+
+  // Recalculate offset after each conversion. This handles DST transitions.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const offset = getTimeZoneOffsetMilliseconds(result, timeZone);
+    const next = new Date(localTimeAsUtc - offset);
+
+    if (next.getTime() === result.getTime()) {
+      return next;
+    }
+
+    result = next;
+  }
+
+  return result;
+}
+
+function addCalendarDays(date: string, days: number): string {
+  const [year, month, day] = date.split("-").map(Number);
+  const result = new Date(Date.UTC(year, month - 1, day));
+  result.setUTCDate(result.getUTCDate() + days);
+
+  return formatDateParts(
+    result.getUTCFullYear(),
+    result.getUTCMonth() + 1,
+    result.getUTCDate(),
+  );
+}
+
+export function parseReportPeriod(
+  searchParams: URLSearchParams,
+  now = new Date(),
+): ValidationResult<ReportDateRange> {
+  if (Number.isNaN(now.getTime())) {
+    return {
+      ok: false,
+      error: "Tanggal referensi tidak valid.",
+    };
+  }
+
+  const rawPeriod = searchParams.get("period")?.trim() ?? "";
+
+  if (!REPORT_PERIODS.includes(rawPeriod as ReportPeriod)) {
+    return {
+      ok: false,
+      error: "Parameter period tidak valid.",
+    };
+  }
+
+  const timeZoneResult = parseReportTimeZone(searchParams);
+
+  if (!timeZoneResult.ok) {
+    return {
+      ok: false,
+      error: timeZoneResult.error,
+    };
+  }
+
+  const period = rawPeriod as ReportPeriod;
+  const timeZone = timeZoneResult.value;
+  const { fromDate, toDate } = getReportDateStrings(period, timeZone, now);
+  const toDateExclusive = addCalendarDays(toDate, 1);
+  const from = localDateStartToUtc(fromDate, timeZone);
+  const toExclusive = localDateStartToUtc(toDateExclusive, timeZone);
+
+  return {
+    ok: true,
+    value: {
+      period,
+      timeZone,
+      fromDate,
+      toDate,
+      from,
+      toExclusive,
+    },
+  };
 }
 
 export function parseEnum<const T extends string>(
