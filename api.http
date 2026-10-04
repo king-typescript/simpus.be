@@ -38,7 +38,7 @@ Cookie: simpli_auth=TOKEN_LOGIN
   "returnNote": "Dikembalikan lengkap"
 }
 
-### salinan buku
+### denda
 POST http://localhost:3000/api/internal/jobs/fines
 Authorization: Bearer 2f37709150832e3dcf227bae6c1787c2c56833979e4b6fdfb1b862bf512d26be
 Content-Type: application/json
@@ -52,5 +52,5 @@ Content-Type: application/json
 }
 // Dockerfile
 ### list salinan buku
-GET http://localhost:3000/api/salinan-buku
+GET http://localhost:3000/api/kategori
 Content-Type: application/json

@@ -459,6 +459,26 @@ export function parseHttpsUrl(
   return { ok: true, value: normalized };
 }
 
+export function parseBookCoverUrl(
+  value: unknown,
+  field = "URL sampul",
+): ValidationResult<string | null> {
+  if (value === null || value === undefined || value === "") {
+    return { ok: true, value: null };
+  }
+
+  if (typeof value !== "string") {
+    return { ok: false, error: `${field} tidak valid.` };
+  }
+
+  const normalized = value.trim();
+  if (/^\/uploads\/cover\/[0-9a-f-]{36}\.(?:jpg|png|webp)$/i.test(normalized)) {
+    return { ok: true, value: normalized };
+  }
+
+  return parseHttpsUrl(normalized, field);
+}
+
 export function isJsonContentType(request: Request): boolean {
   return (
     request.headers

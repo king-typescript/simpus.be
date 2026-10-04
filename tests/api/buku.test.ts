@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  auth: vi.fn(), librarian: vi.fn(), findMany: vi.fn(), count: vi.fn(), findFirst: vi.fn(), create: vi.fn(), update: vi.fn(), category: vi.fn(), authors: vi.fn(), authorCount: vi.fn(), audit: vi.fn(), transaction: vi.fn(),
+  auth: vi.fn(), librarian: vi.fn(), findMany: vi.fn(), count: vi.fn(), findFirst: vi.fn(), create: vi.fn(), update: vi.fn(), category: vi.fn(), authors: vi.fn(), authorCount: vi.fn(), audit: vi.fn(), transaction: vi.fn(), deleteBookCover: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({ noStoreHeaders: { "Cache-Control": "no-store" }, requireAuthenticatedUser: mocks.auth, requireLibrarian: mocks.librarian }));
+vi.mock("@/lib/book-cover-storage", () => ({ deleteBookCover: mocks.deleteBookCover }));
 vi.mock("@/lib/prisma", () => ({ prisma: { book: { findMany: mocks.findMany, count: mocks.count, findFirst: mocks.findFirst, create: mocks.create, update: mocks.update }, $transaction: mocks.transaction } }));
 
 const listRoute = await import("@/app/api/buku/route");
@@ -38,7 +39,7 @@ beforeEach(() => {
   mocks.auth.mockResolvedValue({ ok: true, user });
   mocks.librarian.mockResolvedValue({ ok: true, user: librarian });
   mocks.findMany.mockResolvedValue([book]); mocks.count.mockResolvedValue(1); mocks.findFirst.mockResolvedValue(detail);
-  mocks.category.mockResolvedValue({ id: categoryId }); mocks.authors.mockResolvedValue([{ id: authorId }]); mocks.authorCount.mockResolvedValue(1); mocks.create.mockResolvedValue(detail); mocks.update.mockResolvedValue(detail); mocks.audit.mockResolvedValue({});
+  mocks.category.mockResolvedValue({ id: categoryId }); mocks.authors.mockResolvedValue([{ id: authorId }]); mocks.authorCount.mockResolvedValue(1); mocks.create.mockResolvedValue(detail); mocks.update.mockResolvedValue(detail); mocks.audit.mockResolvedValue({}); mocks.deleteBookCover.mockResolvedValue(undefined);
   mocks.transaction.mockImplementation(async (operation: Callback | readonly unknown[]) => typeof operation === "function" ? operation(tx()) : Promise.all(operation));
 });
 
@@ -79,7 +80,8 @@ describe("GET /api/buku/[id]", () => {
 describe("PATCH /api/buku/[id]", () => {
   it.each([401, 403])("requires librarian: %s", async status => { mocks.librarian.mockResolvedValue({ ok: false, status }); await error(await detailRoute.PATCH(req("PATCH", undefined, { title: "X" }), ctx()), status, "Tidak memiliki akses."); });
   it("rejects invalid ID, body, and empty changes", async () => { await error(await detailRoute.PATCH(req("PATCH", undefined, {}), ctx("bad")), 422, "ID buku tidak valid."); await error(await detailRoute.PATCH(req("PATCH", undefined, {}), ctx()), 422, "Tidak ada perubahan."); await error(await detailRoute.PATCH(req("PATCH", undefined, { title: "" }), ctx()), 422, "Judul tidak valid."); });
-  it("updates scalar nullable fields and authors", async () => { const response = await detailRoute.PATCH(req("PATCH", undefined, { isbn: null, publisher: null, edition: null, description: null, coverUrl: null, publicationYear: null, categoryId, authorIds: [authorId] }), ctx()); expect(response.status).toBe(200); expect(mocks.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: bookId }, data: expect.objectContaining({ isbn: null, publisher: null, edition: null, description: null, coverUrl: null, publicationYear: null, categoryId, authors: { set: [{ id: authorId }] } }) })); });
+  it("updates scalar nullable fields and authors", async () => { const response = await detailRoute.PATCH(req("PATCH", undefined, { isbn: null, publisher: null, edition: null, description: null, coverUrl: null, publicationYear: null, categoryId, authorIds: [authorId] }), ctx()); expect(response.status).toBe(200); expect(mocks.update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: bookId }, data: expect.objectContaining({ isbn: null, publisher: null, edition: null, description: null, coverUrl: null, publicationYear: null, categoryId, authors: { set: [{ id: authorId }] } }) })); expect(mocks.deleteBookCover).toHaveBeenCalledWith(book.coverUrl); });
+  it("deletes old local cover after a replacement", async () => { const oldCover = "/uploads/cover/11111111-1111-4111-8111-111111111111.jpg"; mocks.findFirst.mockResolvedValue({ ...detail, coverUrl: oldCover }); mocks.update.mockResolvedValue({ ...detail, coverUrl: "/uploads/cover/22222222-2222-4222-8222-222222222222.webp" }); const response = await detailRoute.PATCH(req("PATCH", undefined, { coverUrl: "/uploads/cover/22222222-2222-4222-8222-222222222222.webp" }), ctx()); expect(response.status).toBe(200); expect(mocks.deleteBookCover).toHaveBeenCalledWith(oldCover); });
   it("maps missing book, category, author, and duplicate ISBN", async () => { mocks.findFirst.mockResolvedValue(null); await error(await detailRoute.PATCH(req("PATCH", undefined, { title: "X" }), ctx()), 404, "Buku tidak ditemukan."); mocks.findFirst.mockResolvedValue(detail); mocks.category.mockResolvedValue(null); await error(await detailRoute.PATCH(req("PATCH", undefined, { categoryId }), ctx()), 422, "Kategori tidak ditemukan."); mocks.category.mockResolvedValue({ id: categoryId }); mocks.authorCount.mockResolvedValue(0); await error(await detailRoute.PATCH(req("PATCH", undefined, { authorIds: [authorId] }), ctx()), 422, "Salah satu penulis tidak ditemukan."); });
 });
 

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { deleteBookCover } from "@/lib/book-cover-storage";
 import { noStoreHeaders, requireAuthenticatedUser, requireLibrarian } from "@/lib/auth";
 import {
   getClientIp,
@@ -8,7 +9,7 @@ import {
   isRecord,
   isUuid,
   normalizeText,
-  parseHttpsUrl,
+  parseBookCoverUrl,
   parseOptionalString,
   parseRequiredString,
 } from "@/lib/validation";
@@ -78,7 +79,7 @@ export async function PATCH(request: Request, context: Context) {
     }
   }
   if ("coverUrl" in body) {
-    const result = parseHttpsUrl(body.coverUrl, "URL sampul");
+    const result = parseBookCoverUrl(body.coverUrl, "URL sampul");
     if (!result.ok) return errorResponse(result.error, 422);
     data.coverUrl = result.value;
   }
@@ -95,7 +96,7 @@ export async function PATCH(request: Request, context: Context) {
   if (!Object.keys(data).length && authorIds === undefined) return errorResponse("Tidak ada perubahan.", 422);
 
   try {
-    const updated = await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       const current = await tx.book.findFirst({ where: { id, isActive: true }, select: detailSelect });
       if (!current) return null;
       if (data.categoryId && !(await tx.category.findFirst({ where: { id: data.categoryId, isActive: true }, select: { id: true } }))) throw new Error("CATEGORY_NOT_FOUND");
@@ -106,9 +107,13 @@ export async function PATCH(request: Request, context: Context) {
       }
       const book = await tx.book.update({ where: { id }, data: { ...data, ...(uniqueAuthors ? { authors: { set: uniqueAuthors.map((authorId) => ({ id: authorId })) } } : {}) }, select: detailSelect });
       await tx.auditLog.create({ data: { userId: auth.user.id, action: "UPDATE", entityType: "Book", entityId: id, oldData: jsonValue(current), newData: jsonValue(book), ipAddress: getClientIp(request) } });
-      return book;
+      return { book, previousCoverUrl: current.coverUrl };
     });
-    return updated ? NextResponse.json({ data: updated }, { headers: noStoreHeaders }) : errorResponse("Buku tidak ditemukan.", 404);
+    if (!result) return errorResponse("Buku tidak ditemukan.", 404);
+    if ("coverUrl" in data && data.coverUrl !== result.previousCoverUrl) {
+      await deleteBookCover(result.previousCoverUrl);
+    }
+    return NextResponse.json({ data: result.book }, { headers: noStoreHeaders });
   } catch (error: unknown) {
     if (error instanceof Error && error.message === "CATEGORY_NOT_FOUND") return errorResponse("Kategori tidak ditemukan.", 422);
     if (error instanceof Error && error.message === "AUTHOR_NOT_FOUND") return errorResponse("Salah satu penulis tidak ditemukan.", 422);

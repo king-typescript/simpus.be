@@ -9,7 +9,7 @@ import {
   isUuid,
   normalizeText,
   parseEnum,
-  parseHttpsUrl,
+  parseBookCoverUrl,
   parseOptionalString,
   parsePagination,
   parseRequiredString,
@@ -96,7 +96,7 @@ export async function POST(request: Request) {
   const publisherResult = parseOptionalString(body.publisher, { field: "Penerbit", maxLength: 200 });
   const editionResult = parseOptionalString(body.edition, { field: "Edisi", maxLength: 100 });
   const descriptionResult = parseOptionalString(body.description, { field: "Deskripsi", maxLength: 5000 });
-  const coverResult = parseHttpsUrl(body.coverUrl, "URL sampul");
+  const coverResult = parseBookCoverUrl(body.coverUrl, "URL sampul");
   const categoryId = body.categoryId;
   const authorIds = body.authorIds;
   const publicationYear = body.publicationYear === undefined || body.publicationYear === null ? null : body.publicationYear;
