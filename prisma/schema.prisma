@@ -128,7 +128,6 @@ model Category {
   books Book[]
   @@map("categories")
 }
-
 model Book {
   id              String   @id @default(uuid())
   isbn            String?  @unique

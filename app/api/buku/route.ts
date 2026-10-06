@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getBookCoverUrl } from "@/lib/book-cover-url";
 import { noStoreHeaders, requireAuthenticatedUser, requireLibrarian } from "@/lib/auth";
 import {
   getClientIp,
@@ -23,6 +24,10 @@ function errorResponse(error: string, status: number) {
 
 function jsonValue(value: unknown) {
   return JSON.parse(JSON.stringify(value));
+}
+
+async function withCoverUrl<T extends { coverUrl: string | null }>(book: T) {
+  return { ...book, coverUrl: await getBookCoverUrl(book.coverUrl) };
 }
 
 const bookSelect = {
@@ -76,7 +81,11 @@ export async function GET(request: Request) {
       prisma.book.findMany({ where, select: bookSelect, orderBy: [{ createdAt: "desc" }, { id: "desc" }], skip: (page - 1) * limit, take: limit }),
       prisma.book.count({ where }),
     ]);
-    return NextResponse.json({ data: data.map(({ _count, ...book }) => ({ ...book, copyCount: _count.copies })), pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } }, { headers: noStoreHeaders });
+    const books = await Promise.all(data.map(async ({ _count, ...book }) => ({
+      ...(await withCoverUrl(book)),
+      copyCount: _count.copies,
+    })));
+    return NextResponse.json({ data: books, pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } }, { headers: noStoreHeaders });
   } catch {
     return errorResponse("Terjadi kesalahan pada server.", 500);
   }
@@ -122,7 +131,7 @@ export async function POST(request: Request) {
       await tx.auditLog.create({ data: { userId: auth.user.id, action: "CREATE", entityType: "Book", entityId: book.id, newData: jsonValue(book), ipAddress: getClientIp(request) } });
       return book;
     });
-    return NextResponse.json({ data }, { status: 201, headers: noStoreHeaders });
+    return NextResponse.json({ data: await withCoverUrl(data) }, { status: 201, headers: noStoreHeaders });
   } catch (error: unknown) {
     if (error instanceof Error && error.message === "CATEGORY_NOT_FOUND") return errorResponse("Kategori tidak ditemukan.", 422);
     if (error instanceof Error && error.message === "AUTHOR_NOT_FOUND") return errorResponse("Salah satu penulis tidak ditemukan.", 422);

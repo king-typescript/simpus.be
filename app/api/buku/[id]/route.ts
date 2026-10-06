@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getBookCoverUrl } from "@/lib/book-cover-url";
 import { deleteBookCover } from "@/lib/book-cover-storage";
 import { noStoreHeaders, requireAuthenticatedUser, requireLibrarian } from "@/lib/auth";
 import {
@@ -40,7 +41,8 @@ export async function GET(_request: Request, context: Context) {
   if (!isUuid(id)) return errorResponse("ID buku tidak valid.", 422);
   try {
     const data = await prisma.book.findFirst({ where: { id, isActive: true, category: { is: { isActive: true } } }, select: detailSelect });
-    return data ? NextResponse.json({ data }, { headers: noStoreHeaders }) : errorResponse("Buku tidak ditemukan.", 404);
+    if (!data) return errorResponse("Buku tidak ditemukan.", 404);
+    return NextResponse.json({ data: { ...data, coverUrl: await getBookCoverUrl(data.coverUrl) } }, { headers: noStoreHeaders });
   } catch { return errorResponse("Terjadi kesalahan pada server.", 500); }
 }
 
@@ -113,7 +115,7 @@ export async function PATCH(request: Request, context: Context) {
     if ("coverUrl" in data && data.coverUrl !== result.previousCoverUrl) {
       await deleteBookCover(result.previousCoverUrl);
     }
-    return NextResponse.json({ data: result.book }, { headers: noStoreHeaders });
+    return NextResponse.json({ data: { ...result.book, coverUrl: await getBookCoverUrl(result.book.coverUrl) } }, { headers: noStoreHeaders });
   } catch (error: unknown) {
     if (error instanceof Error && error.message === "CATEGORY_NOT_FOUND") return errorResponse("Kategori tidak ditemukan.", 422);
     if (error instanceof Error && error.message === "AUTHOR_NOT_FOUND") return errorResponse("Salah satu penulis tidak ditemukan.", 422);

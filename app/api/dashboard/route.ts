@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { BookStatus, FineStatus, LoanStatus, Prisma } from "@/app/generated/prisma/client";
 import { noStoreHeaders, requireAuthenticatedUser } from "@/lib/auth";
 import { calculateDaysLate } from "@/lib/fine";
+import { getBookCoverUrl } from "@/lib/book-cover-url";
 import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
@@ -23,6 +24,20 @@ function serializeFine<T extends { ratePerDay: Prisma.Decimal; amount: Prisma.De
     amount: money(fine.amount),
     payment: fine.payment ? { ...fine.payment, amount: money(fine.payment.amount) } : null,
   };
+}
+
+async function serializeBookCover<T extends { coverUrl: string | null }>(book: T) {
+  return { ...book, coverUrl: await getBookCoverUrl(book.coverUrl) };
+}
+
+async function serializeActiveLoanCovers<T extends { items: Array<{ copy: { book: { coverUrl: string | null } } }> }>(loans: T[]) {
+  return Promise.all(loans.map(async (loan) => ({
+    ...loan,
+    items: await Promise.all(loan.items.map(async (item) => ({
+      ...item,
+      copy: { ...item.copy, book: await serializeBookCover(item.copy.book) },
+    }))),
+  })));
 }
 
 async function getLibrarianDashboard() {
@@ -106,7 +121,7 @@ async function getStudentDashboard(userId: string) {
       student,
       loans: { active: activeLoanCount, overdue: overdueLoanCount },
       fines: { unpaidCount: unpaidFineCount, unpaidAmount: money(unpaidFineSummary._sum.amount) },
-      activeLoans: activeLoans.map((loan) => ({ ...loan, daysLate: calculateDaysLate(loan.dueDate, now) })),
+      activeLoans: await serializeActiveLoanCovers(activeLoans.map((loan) => ({ ...loan, daysLate: calculateDaysLate(loan.dueDate, now) }))),
       recentLoans,
       unpaidFines: unpaidFines.map(serializeFine),
     },

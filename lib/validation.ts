@@ -472,7 +472,7 @@ export function parseBookCoverUrl(
   }
 
   const normalized = value.trim();
-  if (/^\/uploads\/cover\/[0-9a-f-]{36}\.(?:jpg|png|webp)$/i.test(normalized)) {
+  if (/^book-covers\/[0-9a-f-]{36}\.(?:jpg|png|webp)$/i.test(normalized)) {
     return { ok: true, value: normalized };
   }
 

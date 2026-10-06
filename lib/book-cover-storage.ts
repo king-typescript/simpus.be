@@ -1,17 +1,12 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
-import { mkdir, unlink, writeFile } from "node:fs/promises";
-import path from "node:path";
+import { DeleteObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
+
+import { getRustFsClient, getRustFsConfig } from "@/lib/rustfs";
 
 export const BOOK_COVER_MAX_BYTES = 5 * 1024 * 1024;
-export const BOOK_COVER_UPLOAD_DIRECTORY = path.join(
-  process.cwd(),
-  "public",
-  "uploads",
-  "cover",
-);
-export const BOOK_COVER_UPLOAD_URL_PREFIX = "/uploads/cover";
+export const BOOK_COVER_KEY_PREFIX = "book-covers";
 
 export type BookCoverImage = {
   extension: "jpg" | "png" | "webp";
@@ -56,34 +51,43 @@ export function detectBookCoverImage(bytes: Uint8Array): BookCoverImage | null {
   return null;
 }
 
+function getBookCoverKey(image: BookCoverImage) {
+  return `${BOOK_COVER_KEY_PREFIX}/${randomUUID()}.${image.extension}`;
+}
+
 export async function saveBookCover(bytes: Uint8Array, image: BookCoverImage) {
-  const filename = `${randomUUID()}.${image.extension}`;
-  const filePath = path.join(BOOK_COVER_UPLOAD_DIRECTORY, filename);
-  const url = `${BOOK_COVER_UPLOAD_URL_PREFIX}/${filename}`;
+  const key = getBookCoverKey(image);
+  const config = getRustFsConfig();
 
-  await mkdir(BOOK_COVER_UPLOAD_DIRECTORY, { recursive: true });
+  await getRustFsClient().send(new PutObjectCommand({
+    Bucket: config.bucket,
+    Key: key,
+    Body: bytes,
+    ContentLength: bytes.byteLength,
+    ContentType: image.contentType,
+    CacheControl: "private, max-age=0, no-cache",
+  }));
 
-  let fileCreated = false;
-  try {
-    await writeFile(filePath, bytes, { flag: "wx", mode: 0o644 });
-    fileCreated = true;
-    return { url, contentType: image.contentType, size: bytes.byteLength };
-  } catch (error) {
-    if (fileCreated) {
-      await unlink(filePath).catch(() => undefined);
-    }
-    throw error;
-  }
+  return {
+    key,
+    contentType: image.contentType,
+    size: bytes.byteLength,
+  };
 }
 
-const localCoverUrlPattern = /^\/uploads\/cover\/[0-9a-f-]{36}\.(?:jpg|png|webp)$/i;
+const bookCoverKeyPattern = /^book-covers\/[0-9a-f-]{36}\.(?:jpg|png|webp)$/i;
 
-export function getBookCoverFilePath(url: string | null | undefined) {
-  if (!url || !localCoverUrlPattern.test(url)) return null;
-  return path.join(BOOK_COVER_UPLOAD_DIRECTORY, path.basename(url));
+export function isBookCoverKey(value: string | null | undefined): value is string {
+  return value !== null && value !== undefined && bookCoverKeyPattern.test(value);
 }
 
-export async function deleteBookCover(url: string | null | undefined) {
-  const filePath = getBookCoverFilePath(url);
-  if (filePath) await unlink(filePath).catch(() => undefined);
+export async function deleteBookCover(key: string | null | undefined) {
+  if (!isBookCoverKey(key)) return;
+
+  const config = getRustFsConfig();
+
+  await getRustFsClient().send(new DeleteObjectCommand({
+    Bucket: config.bucket,
+    Key: key,
+  }));
 }
