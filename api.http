@@ -2,8 +2,8 @@ POST http://localhost:3000/api/auth/login
 Content-Type: application/json
 
 {
-    "username": "siswa001",
-    "password": "studentSimpus123"
+    "username": "admin",
+    "password": "adminSimpus123"
 }
 
 ### logout
@@ -51,6 +51,10 @@ Content-Type: application/json
   "loanId": "uuid"
 }
 // Dockerfile
-### list salinan buku
+### list kategori
 GET http://localhost:3000/api/kategori
+Content-Type: application/json
+
+### book-cover
+POST http://localhost:3000/api/upload/cover
 Content-Type: application/json

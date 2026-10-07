@@ -29,6 +29,17 @@ enum BookStatus {
   HILANG
 }
 
+enum EbookStatus {
+  AKTIF
+  NONAKTIF
+}
+
+enum EbookAccessStatus {
+  AKTIF
+  DIKEMBALIKAN
+  KEDALUWARSA
+}
+
 enum LoanStatus {
   AKTIF
   SEBAGIAN_DIKEMBALIKAN
@@ -98,6 +109,7 @@ model Student {
 
   user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
   loans Loan[]
+  ebookAccesses EbookAccess[]
 
   @@index([name])
   @@index([className])
@@ -145,11 +157,53 @@ model Book {
   category Category   @relation(fields: [categoryId], references: [id])
   authors  Author[]
   copies   BookCopy[]
+  ebook    Ebook?
 
   @@index([title])
   @@index([categoryId])
   @@index([isActive])
   @@map("books")
+}
+
+model Ebook {
+  id          String      @id @default(uuid())
+  bookId      String      @unique
+  fileKey     String      @unique
+  fileName    String
+  contentType String
+  fileSize    BigInt
+  status      EbookStatus @default(AKTIF)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  book     Book          @relation(fields: [bookId], references: [id], onDelete: Restrict)
+  accesses EbookAccess[]
+
+  @@index([status])
+  @@map("ebooks")
+}
+
+model EbookAccess {
+  id              String            @id @default(uuid())
+  ebookId         String
+  studentId       String
+  accessTokenHash String            @unique
+  startedAt       DateTime          @default(now())
+  expiresAt       DateTime
+  returnedAt      DateTime?
+  lastAccessedAt  DateTime?
+  extensionCount  Int               @default(0)
+  status          EbookAccessStatus  @default(AKTIF)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  ebook   Ebook   @relation(fields: [ebookId], references: [id], onDelete: Restrict)
+  student Student @relation(fields: [studentId], references: [id], onDelete: Restrict)
+
+  @@index([studentId, status])
+  @@index([ebookId, status])
+  @@index([expiresAt])
+  @@map("ebook_accesses")
 }
 
 model Shelf {

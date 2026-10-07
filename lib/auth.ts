@@ -82,6 +82,39 @@ export async function requireAuthenticatedUser() {
   }
 }
 
+export async function requireStudent() {
+  const auth = await requireAuthenticatedUser();
+
+  if (!auth.ok) return auth;
+  if (auth.user.role !== "SISWA") {
+    return { ok: false as const, status: 403 as const };
+  }
+
+  const student = await prisma.student.findFirst({
+    where: {
+      userId: auth.user.id,
+      isActive: true,
+    },
+    select: {
+      id: true,
+      userId: true,
+      nis: true,
+      name: true,
+      className: true,
+      libraryCardNumber: true,
+      isActive: true,
+    },
+  });
+
+  if (!student) return { ok: false as const, status: 403 as const };
+
+  return {
+    ok: true as const,
+    user: auth.user,
+    student,
+  };
+}
+
 export async function requireLibrarian() {
   const token = (await cookies()).get(AUTH_COOKIE_NAME)?.value;
 
