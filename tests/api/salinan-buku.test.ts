@@ -11,7 +11,7 @@ const listRoute = await import("@/app/api/salinan-buku/route");
 const detailRoute = await import("@/app/api/salinan-buku/[id]/route");
 const statusRoute = await import("@/app/api/salinan-buku/[id]/status/route");
 
-const librarian = { id: "11111111-1111-4111-8111-111111111111", role: "PUSTAKAWAN", status: "AKTIF" };
+const librarian = { id: "11111111-1111-4111-8111-111111111111", schoolId: "33333333-3333-4333-8333-333333333333", role: "PUSTAKAWAN", status: "AKTIF" };
 const student = { id: "22222222-2222-4222-8222-222222222222", role: "SISWA", status: "AKTIF" };
 const copyId = "33333333-3333-4333-8333-333333333333";
 const bookId = "44444444-4444-4444-8444-444444444444";
@@ -59,7 +59,8 @@ describe("POST /api/salinan-buku", () => {
 });
 
 describe("GET /api/salinan-buku/[id]", () => {
-  it("validates ID, returns detail, 404, and 500", async () => { await error(await detailRoute.GET(req("GET"), ctx("bad")), 422, "ID salinan buku tidak valid."); const response = await detailRoute.GET(req("GET"), ctx()); await expect(response.json()).resolves.toEqual({ data: serializedCopy }); mocks.findFirst.mockResolvedValue(null); await error(await detailRoute.GET(req("GET"), ctx()), 404, "Salinan buku tidak ditemukan."); mocks.findFirst.mockRejectedValue(new Error("DB")); await error(await detailRoute.GET(req("GET"), ctx()), 500, "Terjadi kesalahan pada server."); });
+  it("validates ID, scopes to school, returns detail, 404, and 500", async () => { mocks.auth.mockResolvedValue({ ok: true, user: librarian, schoolId: librarian.schoolId }); await error(await detailRoute.GET(req("GET"), ctx("bad")), 422, "ID salinan buku tidak valid."); const response = await detailRoute.GET(req("GET"), ctx()); expect(mocks.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ id: copyId, schoolId: librarian.schoolId }) })); await expect(response.json()).resolves.toEqual({ data: serializedCopy }); mocks.findFirst.mockResolvedValue(null); await error(await detailRoute.GET(req("GET"), ctx()), 404, "Salinan buku tidak ditemukan."); mocks.findFirst.mockRejectedValue(new Error("DB")); await error(await detailRoute.GET(req("GET"), ctx()), 500, "Terjadi kesalahan pada server."); });
+  it("rejects copy from another school (IDOR)", async () => { mocks.auth.mockResolvedValue({ ok: true, user: librarian, schoolId: librarian.schoolId }); mocks.findFirst.mockResolvedValue(null); await error(await detailRoute.GET(req("GET"), ctx()), 404, "Salinan buku tidak ditemukan."); expect(mocks.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ schoolId: librarian.schoolId }) })); });
 });
 
 describe("PATCH /api/salinan-buku/[id]", () => {

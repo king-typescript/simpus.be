@@ -51,9 +51,12 @@ export async function GET(_request: Request, context: Context) {
 
   try {
     const data = await prisma.bookCopy.findFirst({
-      where: auth.user.role === "PUSTAKAWAN"
-        ? { id, isActive: true, book: { isActive: true, category: { is: { isActive: true } } } }
-        : { id, isActive: true, book: { isActive: true, category: { is: { isActive: true } } } },
+      where: {
+        id,
+        schoolId: auth.schoolId,
+        isActive: true,
+        book: { isActive: true, category: { is: { isActive: true } } },
+      },
       select: auth.user.role === "PUSTAKAWAN" ? select : studentSelect,
     });
     return data ? NextResponse.json({ data }, { headers: noStoreHeaders }) : errorResponse("Salinan buku tidak ditemukan.", 404);
