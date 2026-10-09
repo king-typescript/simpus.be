@@ -48,7 +48,7 @@ export async function POST(request: Request) {
   if (!image) return errorResponse("Format file harus JPEG, PNG, atau WebP.", 422);
 
   try {
-    const saved = await saveBookCover(bytes, image);
+    const saved = await saveBookCover(bytes, image, auth.schoolId);
     return NextResponse.json({ data: saved }, { status: 201, headers: noStoreHeaders });
   } catch {
     return errorResponse("File sampul gagal disimpan.", 500);

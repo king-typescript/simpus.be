@@ -80,9 +80,10 @@ const ebookAccessSelect = {
 export async function getEbookAccessForStudent(
   accessId: string,
   studentId: string,
+  schoolId: string,
 ) {
   const access = await prisma.ebookAccess.findFirst({
-    where: { id: accessId, studentId },
+    where: { id: accessId, studentId, schoolId },
     select: ebookAccessSelect,
   });
 
@@ -99,9 +100,10 @@ export async function getEbookAccessForStudent(
 export async function assertActiveEbookAccess(
   accessId: string,
   studentId: string,
+  schoolId: string,
   now = new Date(),
 ) {
-  const access = await getEbookAccessForStudent(accessId, studentId);
+  const access = await getEbookAccessForStudent(accessId, studentId, schoolId);
 
   if (access.ebook.status !== "AKTIF" || !access.ebook.book.isActive) {
     throw new EbookAccessError("EBOOK_NOT_ACTIVE", "E-book tidak aktif.");
@@ -132,6 +134,7 @@ export async function assertActiveEbookAccess(
 export async function assertEbookAccessToken(
   accessId: string,
   studentId: string,
+  schoolId: string,
   authorizationHeader: string | null,
 ) {
   const token = extractBearerToken(authorizationHeader);
@@ -159,12 +162,13 @@ export async function assertEbookAccessToken(
     );
   }
 
-  return assertActiveEbookAccess(access.id, studentId);
+  return assertActiveEbookAccess(access.id, studentId, schoolId);
 }
 
 export async function markEbookAccessUsed(
   accessId: string,
   studentId: string,
+  schoolId: string,
   now = new Date(),
 ): Promise<void> {
   await prisma.ebookAccess.updateMany({
@@ -194,12 +198,13 @@ function auditValue(value: unknown) {
 export async function returnEbookAccess(
   accessId: string,
   studentId: string,
+  schoolId: string,
   now = new Date(),
   audit?: EbookAuditOptions,
 ) {
   return prisma.$transaction(async (tx) => {
     const current = await tx.ebookAccess.findFirst({
-      where: { id: accessId, studentId },
+      where: { id: accessId, studentId, schoolId },
       select: { status: true, expiresAt: true },
     });
 
@@ -213,14 +218,14 @@ export async function returnEbookAccess(
 
     if (isEbookAccessExpired(current.expiresAt, now)) {
       await tx.ebookAccess.updateMany({
-        where: { id: accessId, studentId, status: "AKTIF" },
+        where: { id: accessId, studentId, schoolId, status: "AKTIF" },
         data: { status: "KEDALUWARSA" },
       });
       throw new EbookAccessError("ACCESS_EXPIRED", "Masa akses e-book sudah berakhir.");
     }
 
     const result = await tx.ebookAccess.updateMany({
-      where: { id: accessId, studentId, status: "AKTIF", expiresAt: { gt: now } },
+      where: { id: accessId, studentId, schoolId, status: "AKTIF", expiresAt: { gt: now } },
       data: { status: "DIKEMBALIKAN", returnedAt: now },
     });
 
@@ -229,7 +234,7 @@ export async function returnEbookAccess(
     }
 
     const returned = await tx.ebookAccess.findUniqueOrThrow({
-      where: { id: accessId },
+      where: { id: accessId, schoolId },
       select: {
         id: true,
         ebookId: true,
@@ -269,13 +274,14 @@ export async function returnEbookAccess(
 async function extendEbookAccessOnce(
   accessId: string,
   studentId: string,
+  schoolId: string,
   now: Date,
   audit?: EbookAuditOptions,
 ) {
   return prisma.$transaction(
     async (tx) => {
       const access = await tx.ebookAccess.findFirst({
-        where: { id: accessId, studentId },
+        where: { id: accessId, studentId, schoolId },
         select: {
           id: true,
           expiresAt: true,
@@ -310,7 +316,7 @@ async function extendEbookAccessOnce(
 
       if (isEbookAccessExpired(access.expiresAt, now)) {
         await tx.ebookAccess.updateMany({
-          where: { id: access.id, status: "AKTIF" },
+          where: { id: access.id, schoolId, status: "AKTIF" },
           data: { status: "KEDALUWARSA" },
         });
 
@@ -391,12 +397,13 @@ async function extendEbookAccessOnce(
 export async function extendEbookAccess(
   accessId: string,
   studentId: string,
+  schoolId: string,
   now = new Date(),
   audit?: EbookAuditOptions,
 ) {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      return await extendEbookAccessOnce(accessId, studentId, now, audit);
+      return await extendEbookAccessOnce(accessId, studentId, schoolId, now, audit);
     } catch (error) {
       const conflict = typeof error === "object"
         && error !== null

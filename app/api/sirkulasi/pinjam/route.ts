@@ -11,7 +11,6 @@ import {
 } from "@/lib/validation";
 
 export const runtime = "nodejs";
-const SETTING_KEY = "DEFAULT";
 
 function errorResponse(error: string, status: number) { return NextResponse.json({ error }, { status, headers: noStoreHeaders }); }
 function jsonValue(value: unknown) { return JSON.parse(JSON.stringify(value)); }
@@ -35,19 +34,19 @@ export async function POST(request: Request) {
 
   try {
     const loan = await serializable(() => prisma.$transaction(async (tx) => {
-      const settings = await tx.librarySetting.findUnique({ where: { key: SETTING_KEY }, select: { maxLoanDays: true, maxActiveCopies: true } });
+      const settings = await tx.librarySetting.findUnique({ where: { schoolId: auth.schoolId }, select: { maxLoanDays: true, maxActiveCopies: true } });
       if (!settings) throw new Error("SETTINGS_NOT_FOUND");
       if (dueDate.getTime() > Date.now() + settings.maxLoanDays * 86_400_000) throw new Error("DUE_DATE_TOO_FAR");
       if (copyIds.length > settings.maxActiveCopies) throw new Error("COPY_LIMIT_EXCEEDED");
-      if (!(await tx.student.findFirst({ where: { id: studentId, isActive: true, user: { status: "AKTIF" } }, select: { id: true } }))) throw new Error("STUDENT_NOT_FOUND");
-      const activeCount = await tx.loanItem.count({ where: { returnedAt: null, loan: { studentId, status: { in: ["AKTIF", "SEBAGIAN_DIKEMBALIKAN"] } } } });
+      if (!(await tx.student.findFirst({ where: { id: studentId, schoolId: auth.schoolId, isActive: true, user: { status: "AKTIF" } }, select: { id: true } }))) throw new Error("STUDENT_NOT_FOUND");
+      const activeCount = await tx.loanItem.count({ where: { schoolId: auth.schoolId, returnedAt: null, loan: { studentId, status: { in: ["AKTIF", "SEBAGIAN_DIKEMBALIKAN"] } } } });
       if (activeCount + copyIds.length > settings.maxActiveCopies) throw new Error("COPY_LIMIT_EXCEEDED");
-      const copies = await tx.bookCopy.findMany({ where: { id: { in: copyIds }, isActive: true, status: "TERSEDIA", book: { isActive: true, category: { is: { isActive: true } } } }, select: { id: true } });
-      if (copies.length !== copyIds.length) throw new Error("COPY_NOT_AVAILABLE");
-      const locked = await tx.bookCopy.updateMany({ where: { id: { in: copyIds }, isActive: true, status: "TERSEDIA" }, data: { status: "DIPINJAM" } });
+      const copies = await tx.bookCopy.findMany({ where: { schoolId: auth.schoolId, id: { in: copyIds }, isActive: true, status: "TERSEDIA", book: { isActive: true, category: { is: { isActive: true } } } }, select: { id: true, schoolId: true } });
+      if (copies.length !== copyIds.length || copies.some((copy) => copy.schoolId !== auth.schoolId)) throw new Error("COPY_NOT_AVAILABLE");
+      const locked = await tx.bookCopy.updateMany({ where: { schoolId: auth.schoolId, id: { in: copyIds }, isActive: true, status: "TERSEDIA" }, data: { status: "DIPINJAM" } });
       if (locked.count !== copyIds.length) throw new Error("COPY_CONFLICT");
-      const created = await tx.loan.create({ data: { studentId, processedById: auth.user.id, dueDate, notes, status: "AKTIF", items: { create: copyIds.map((copyId) => ({ copyId })) } }, select: { id: true, studentId: true, processedById: true, loanDate: true, dueDate: true, returnedAt: true, status: true, notes: true, items: { select: { id: true, copyId: true } } } });
-      await tx.auditLog.create({ data: { userId: auth.user.id, action: "CREATE", entityType: "Loan", entityId: created.id, newData: jsonValue(created), ipAddress: getClientIp(request) } });
+      const created = await tx.loan.create({ data: { schoolId: auth.schoolId, studentId, processedById: auth.user.id, dueDate, notes, status: "AKTIF", items: { create: copyIds.map((copyId) => ({ schoolId: auth.schoolId, copyId })) } }, select: { id: true, studentId: true, processedById: true, loanDate: true, dueDate: true, returnedAt: true, status: true, notes: true, items: { select: { id: true, copyId: true } } } });
+      await tx.auditLog.create({ data: { schoolId: auth.schoolId, userId: auth.user.id, action: "CREATE", entityType: "Loan", entityId: created.id, newData: jsonValue(created), ipAddress: getClientIp(request) } });
       return created;
     }, { isolationLevel: "Serializable" }));
     return NextResponse.json({ data: loan }, { status: 201, headers: noStoreHeaders });

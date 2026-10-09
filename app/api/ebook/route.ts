@@ -1,3 +1,10 @@
+import { randomUUID } from "node:crypto";
+import { createWriteStream } from "node:fs";
+import { mkdir, rm, open } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import { join } from "node:path";
 import { NextResponse } from "next/server";
 
 import { noStoreHeaders, requireLibrarian, requireStudent } from "@/lib/auth";
@@ -5,7 +12,8 @@ import {
   assertEbookSize,
   deleteEbook,
   detectEbookFile,
-  saveEbook,
+  saveEbookFile,
+  validateEpubFile,
 } from "@/lib/ebook-storage";
 import { prisma } from "@/lib/prisma";
 import { getClientIp, isUuid, parsePagination, parseSearch } from "@/lib/validation";
@@ -51,6 +59,7 @@ export async function GET(request: Request) {
   if (categoryId && !isUuid(categoryId)) return errorResponse("Parameter categoryId tidak valid.", 422);
 
   const where = {
+    schoolId: auth.schoolId,
     status: "AKTIF" as const,
     book: {
       isActive: true,
@@ -68,7 +77,7 @@ export async function GET(request: Request) {
   const [total, ebooks] = await prisma.$transaction([
     prisma.ebook.count({ where }),
     prisma.ebook.findMany({
-      where,
+      where: { ...where, schoolId: auth.schoolId },
       skip: (page - 1) * limit,
       take: limit,
       orderBy: [{ book: { title: "asc" } }, { createdAt: "desc" }],
@@ -96,7 +105,7 @@ export async function GET(request: Request) {
 
   const ids = ebooks.map((ebook) => ebook.id);
   const accesses = ids.length === 0 ? [] : await prisma.ebookAccess.findMany({
-    where: { studentId: auth.student.id, ebookId: { in: ids }, status: "AKTIF", expiresAt: { gt: new Date() } },
+    where: { schoolId: auth.schoolId, studentId: auth.student.id, ebookId: { in: ids }, status: "AKTIF", expiresAt: { gt: new Date() } },
     select: { ebookId: true, expiresAt: true, extensionCount: true },
   });
   const accessByEbook = new Map(accesses.map((access) => [access.ebookId, access]));
@@ -143,31 +152,60 @@ export async function POST(request: Request) {
   const fileName = safeFileName(file.name);
   if (!fileName || fileName.length > 255) return errorResponse("Nama file tidak valid.", 422);
 
-  let bytes: Uint8Array;
+  let tempPath: string | null = null;
+  let detected: Awaited<ReturnType<typeof detectEbookFile>> = null;
+
   try {
     assertEbookSize(file.size);
-    bytes = new Uint8Array(await file.arrayBuffer());
-    assertEbookSize(bytes.byteLength);
+    const tempDirectory = join(tmpdir(), "simpus-satak-ebooks");
+    await mkdir(tempDirectory, { recursive: true, mode: 0o700 });
+    tempPath = join(tempDirectory, `${randomUUID()}.upload`);
+    await pipeline(
+      Readable.fromWeb(file.stream() as import("node:stream/web").ReadableStream),
+      createWriteStream(tempPath, { mode: 0o600 }),
+    );
+
+    if (fileName.toLowerCase().endsWith(".epub")) {
+      detected = await (async () => {
+        const valid = await validateEpubFile(tempPath!);
+        return valid ? { extension: "epub" as const, contentType: "application/epub+zip" as const } : null;
+      })();
+    } else {
+      const header = Buffer.alloc(5);
+      const handle = await open(tempPath, "r");
+      try { await handle.read(header, 0, header.length, 0); } finally { await handle.close(); }
+      detected = await detectEbookFile(header, fileName);
+    }
   } catch {
-    return errorResponse("Ukuran file e-book tidak valid.", 422);
+    if (tempPath) await rm(tempPath, { force: true }).catch(() => undefined);
+    return errorResponse("File e-book tidak valid atau tidak dapat diproses.", 422);
   }
 
-  const detected = detectEbookFile(bytes, fileName);
-  if (!detected) return errorResponse("File harus berupa PDF atau EPUB yang valid.", 422);
+  if (!detected || !tempPath) {
+    if (tempPath) await rm(tempPath, { force: true }).catch(() => undefined);
+    return errorResponse("File harus berupa PDF atau EPUB yang valid.", 422);
+  }
 
   const book = await prisma.book.findFirst({
-    where: { id: bookId, isActive: true, category: { isActive: true } },
+    where: { id: bookId, schoolId: auth.schoolId, isActive: true, category: { isActive: true } },
     select: { id: true, title: true, ebook: { select: { id: true } } },
   });
-  if (!book) return errorResponse("Buku tidak ditemukan atau tidak aktif.", 404);
-  if (book.ebook) return errorResponse("Buku ini sudah memiliki e-book.", 409);
+  if (!book) {
+    await rm(tempPath, { force: true }).catch(() => undefined);
+    return errorResponse("Buku tidak ditemukan atau tidak aktif.", 404);
+  }
+  if (book.ebook) {
+    await rm(tempPath, { force: true }).catch(() => undefined);
+    return errorResponse("Buku ini sudah memiliki e-book.", 409);
+  }
 
-  let saved: Awaited<ReturnType<typeof saveEbook>> | null = null;
+  let saved: Awaited<ReturnType<typeof saveEbookFile>> | null = null;
   try {
-    saved = await saveEbook(bytes, fileName, detected);
+    saved = await saveEbookFile(tempPath, fileName, detected, auth.schoolId);
     const ebook = await prisma.$transaction(async (tx) => {
       const created = await tx.ebook.create({
         data: {
+          schoolId: auth.schoolId,
           bookId: book.id,
           fileKey: saved!.key,
           fileName: saved!.fileName,
@@ -220,5 +258,7 @@ export async function POST(request: Request) {
 
     if (prismaCode(error) === "P2002") return errorResponse("Buku ini sudah memiliki e-book.", 409);
     return errorResponse("Gagal menyimpan e-book.", 500);
+  } finally {
+    await rm(tempPath, { force: true }).catch(() => undefined);
   }
 }

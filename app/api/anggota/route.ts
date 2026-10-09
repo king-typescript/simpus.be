@@ -39,6 +39,7 @@ export async function GET(request: Request) {
   if (statusResult && !statusResult.ok) return jsonError(statusResult.error, 422);
 
   const where = {
+    schoolId: auth.schoolId,
     ...(statusResult?.ok ? { isActive: statusResult.value === "AKTIF" } : {}),
     ...(className ? { className: { contains: className, mode: "insensitive" as const } } : {}),
     ...(search
@@ -56,7 +57,7 @@ export async function GET(request: Request) {
   try {
     const [data, total] = await prisma.$transaction([
       prisma.student.findMany({
-        where,
+        where: { ...where, schoolId: auth.schoolId },
         select: {
           id: true,
           nis: true,
@@ -74,7 +75,7 @@ export async function GET(request: Request) {
         skip: (page - 1) * limit,
         take: limit,
       }),
-      prisma.student.count({ where }),
+      prisma.student.count({ where: { ...where, schoolId: auth.schoolId } }),
     ]);
 
     return NextResponse.json(
@@ -121,13 +122,13 @@ export async function POST(request: Request) {
     const passwordHash = await argon2.hash(password);
     const student = await prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
-        data: { username, passwordHash, role: "SISWA", status: "AKTIF", name },
+        data: { schoolId: auth.schoolId, username, passwordHash, role: "SISWA", status: "AKTIF", name },
       });
       const created = await tx.student.create({
-        data: { userId: user.id, nis, name, className, libraryCardNumber, phone },
+        data: { schoolId: auth.schoolId, userId: user.id, nis, name, className, libraryCardNumber, phone },
         select: { id: true, nis: true, name: true, className: true, libraryCardNumber: true, phone: true, isActive: true, joinedAt: true, user: { select: { id: true, username: true, status: true } } },
       });
-      await tx.auditLog.create({ data: { userId: auth.user.id, action: "CREATE", entityType: "Student", entityId: created.id, newData: created, ipAddress: getClientIp(request) } });
+      await tx.auditLog.create({ data: { schoolId: auth.schoolId, userId: auth.user.id, action: "CREATE", entityType: "Student", entityId: created.id, newData: created, ipAddress: getClientIp(request) } });
       return created;
     });
     return NextResponse.json({ data: student }, { status: 201, headers: noStoreHeaders });

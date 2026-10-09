@@ -38,6 +38,7 @@ export async function GET(request: Request) {
   const status = rawStatus ? rawStatus as RouteStatus : undefined;
   const { page, limit } = pagination.value;
   const where = {
+    schoolId: auth.schoolId,
     studentId: auth.student.id,
     ...(status ? { status } : {}),
     ...(search.value
@@ -54,7 +55,7 @@ export async function GET(request: Request) {
   const [total, accesses] = await prisma.$transaction([
     prisma.ebookAccess.count({ where }),
     prisma.ebookAccess.findMany({
-      where,
+      where: { ...where, schoolId: auth.schoolId },
       skip: (page - 1) * limit,
       take: limit,
       orderBy: { createdAt: "desc" },

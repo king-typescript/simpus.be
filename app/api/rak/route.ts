@@ -67,8 +67,8 @@ export async function GET(request: Request) {
 
   try {
     const [shelves, total] = await prisma.$transaction([
-      prisma.shelf.findMany({ where, select: shelfSelect, orderBy: [{ code: "asc" }, { id: "asc" }], skip: (page - 1) * limit, take: limit }),
-      prisma.shelf.count({ where }),
+      prisma.shelf.findMany({ where: { ...where, schoolId: auth.schoolId }, select: shelfSelect, orderBy: [{ code: "asc" }, { id: "asc" }], skip: (page - 1) * limit, take: limit }),
+      prisma.shelf.count({ where: { ...where, schoolId: auth.schoolId } }),
     ]);
     return NextResponse.json({ data: shelves.map(toShelfResponse), pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } }, { headers: noStoreHeaders });
   } catch {
@@ -96,8 +96,8 @@ export async function POST(request: Request) {
 
   try {
     const shelf = await prisma.$transaction(async (tx) => {
-      const created = await tx.shelf.create({ data: { code, name, location }, select: shelfSelect });
-      await tx.auditLog.create({ data: { userId: auth.user.id, action: "CREATE", entityType: "Shelf", entityId: created.id, newData: jsonValue(created), ipAddress: getClientIp(request) } });
+      const created = await tx.shelf.create({ data: { schoolId: auth.schoolId, code, name, location }, select: shelfSelect });
+      await tx.auditLog.create({ data: { schoolId: auth.schoolId, userId: auth.user.id, action: "CREATE", entityType: "Shelf", entityId: created.id, newData: jsonValue(created), ipAddress: getClientIp(request) } });
       return created;
     });
     return NextResponse.json({ data: toShelfResponse(shelf) }, { status: 201, headers: noStoreHeaders });

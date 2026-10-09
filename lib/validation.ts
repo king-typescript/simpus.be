@@ -488,11 +488,13 @@ export function isJsonContentType(request: Request): boolean {
   );
 }
 
-/** Trust forwarded headers only when deployment proxy strips client-supplied values. */
+/** Use the LAST x-forwarded-for entry (added by our own proxy, client-controlled
+ *  entries sit first and are spoofable). Falls back to x-real-ip. */
 export function getClientIp(request: Request): string | null {
-  return (
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    request.headers.get("x-real-ip") ||
-    null
-  );
+  const forwarded = request.headers.get("x-forwarded-for");
+  if (forwarded) {
+    const parts = forwarded.split(",").map((p) => p.trim()).filter(Boolean);
+    if (parts.length) return parts[parts.length - 1];
+  }
+  return request.headers.get("x-real-ip");
 }

@@ -95,12 +95,12 @@ export async function PATCH(request: Request, context: Context) {
 
   try {
     const updated = await prisma.$transaction(async (tx) => {
-      const current = await tx.bookCopy.findFirst({ where: { id, isActive: true }, select });
+      const current = await tx.bookCopy.findFirst({ where: { id, schoolId: auth.schoolId, isActive: true }, select });
       if (!current) return null;
       if (current.status === "DIPINJAM") throw new Error("BORROWED_COPY_LOCKED");
-      if (data.shelfId && !(await tx.shelf.findUnique({ where: { id: data.shelfId }, select: { id: true } }))) throw new Error("SHELF_NOT_FOUND");
-      const copy = await tx.bookCopy.update({ where: { id }, data, select });
-      await tx.auditLog.create({ data: { userId: auth.user.id, action: "UPDATE", entityType: "BookCopy", entityId: id, oldData: jsonValue(current), newData: jsonValue(copy), ipAddress: getClientIp(request) } });
+      if (data.shelfId && !(await tx.shelf.findUnique({ where: { id: data.shelfId, schoolId: auth.schoolId }, select: { id: true } }))) throw new Error("SHELF_NOT_FOUND");
+      const copy = await tx.bookCopy.update({ where: { id, schoolId: auth.schoolId }, data, select });
+      await tx.auditLog.create({ data: { schoolId: auth.schoolId, userId: auth.user.id, action: "UPDATE", entityType: "BookCopy", entityId: id, oldData: jsonValue(current), newData: jsonValue(copy), ipAddress: getClientIp(request) } });
       return copy;
     }, { isolationLevel: "Serializable" });
     return updated ? NextResponse.json({ data: updated }, { headers: noStoreHeaders }) : errorResponse("Salinan buku tidak ditemukan.", 404);
@@ -121,11 +121,11 @@ export async function DELETE(request: Request, context: Context) {
 
   try {
     const deleted = await prisma.$transaction(async (tx) => {
-      const current = await tx.bookCopy.findFirst({ where: { id, isActive: true }, select });
+      const current = await tx.bookCopy.findFirst({ where: { id, schoolId: auth.schoolId, isActive: true }, select });
       if (!current) return false;
       if (current.status === "DIPINJAM") throw new Error("BORROWED_COPY_CANNOT_DELETE");
-      const copy = await tx.bookCopy.update({ where: { id }, data: { isActive: false }, select });
-      await tx.auditLog.create({ data: { userId: auth.user.id, action: "DEACTIVATE", entityType: "BookCopy", entityId: id, oldData: jsonValue(current), newData: jsonValue(copy), ipAddress: getClientIp(request) } });
+      const copy = await tx.bookCopy.update({ where: { id, schoolId: auth.schoolId }, data: { isActive: false }, select });
+      await tx.auditLog.create({ data: { schoolId: auth.schoolId, userId: auth.user.id, action: "DEACTIVATE", entityType: "BookCopy", entityId: id, oldData: jsonValue(current), newData: jsonValue(copy), ipAddress: getClientIp(request) } });
       return true;
     }, { isolationLevel: "Serializable" });
     return deleted ? new NextResponse(null, { status: 204 }) : errorResponse("Salinan buku tidak ditemukan.", 404);

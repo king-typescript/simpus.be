@@ -34,10 +34,11 @@ export async function GET(request: Request, context: RouteContext) {
     const access = await assertEbookAccessToken(
       accessId,
       auth.student.id,
+      auth.schoolId,
       request.headers.get("authorization"),
     );
 
-    await markEbookAccessUsed(access.id, auth.student.id);
+    await markEbookAccessUsed(access.id, auth.student.id, auth.schoolId);
 
     return NextResponse.json({
       data: {

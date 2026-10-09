@@ -4,18 +4,18 @@ import {
   AUTH_COOKIE_NAME,
   clearAuthCookieOptions,
   noStoreHeaders,
-  requireAuthenticatedUser,
+  requireSchoolContext,
 } from "@/lib/auth";
 import { getClientIp } from "@/lib/validation";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
-  const auth = await requireAuthenticatedUser();
+  const auth = await requireSchoolContext();
 
   if (auth.ok) {
     // ponytail: fire-and-forget audit for logout; acceptable to lose on crash
-    prisma.auditLog.create({ data: { userId: auth.user.id, action: "LOGOUT", entityType: "User", entityId: auth.user.id, ipAddress: getClientIp(request) } }).catch(() => {});
+    prisma.auditLog.create({ data: { schoolId: auth.schoolId, userId: auth.user.id, action: "LOGOUT", entityType: "User", entityId: auth.user.id, ipAddress: getClientIp(request) } }).catch(() => {});
   }
 
   const response = NextResponse.json(

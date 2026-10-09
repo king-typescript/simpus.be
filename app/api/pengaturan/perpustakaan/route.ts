@@ -9,7 +9,6 @@ import {
 } from "@/lib/validation";
 
 export const runtime = "nodejs";
-const SETTING_KEY = "DEFAULT";
 const editableFields = ["maxLoanDays", "maxActiveCopies", "fineRatePerDay"] as const;
 
 function jsonValue(value: unknown) { return JSON.parse(JSON.stringify(value)); }
@@ -28,7 +27,7 @@ export async function GET() {
   const auth = await requireLibrarian();
   if (!auth.ok) return errorResponse("Tidak memiliki akses.", auth.status);
   try {
-    const settings = await prisma.librarySetting.findUnique({ where: { key: SETTING_KEY }, select });
+    const settings = await prisma.librarySetting.findUnique({ where: { schoolId: auth.schoolId }, select });
     return settings ? NextResponse.json({ data: serialize(settings) }, { headers: noStoreHeaders }) : errorResponse("Pengaturan perpustakaan belum tersedia.", 500);
   } catch { return errorResponse("Terjadi kesalahan pada server.", 500); }
 }
@@ -45,10 +44,10 @@ export async function PATCH(request: Request) {
 
   try {
     const settings = await serializable(() => prisma.$transaction(async (tx) => {
-      const current = await tx.librarySetting.findUnique({ where: { key: SETTING_KEY }, select });
+      const current = await tx.librarySetting.findUnique({ where: { schoolId: auth.schoolId }, select });
       if (!current) throw new Error("SETTINGS_NOT_FOUND");
-      const updated = await tx.librarySetting.update({ where: { key: SETTING_KEY }, data: { ...(maxLoanDays !== undefined ? { maxLoanDays } : {}), ...(maxActiveCopies !== undefined ? { maxActiveCopies } : {}), ...(fineRatePerDay !== undefined ? { fineRatePerDay: new Prisma.Decimal(fineRatePerDay) } : {}) }, select });
-      await tx.auditLog.create({ data: { userId: auth.user.id, action: "UPDATE", entityType: "LibrarySetting", entityId: updated.id, oldData: jsonValue(current), newData: jsonValue(updated), ipAddress: getClientIp(request) } });
+      const updated = await tx.librarySetting.update({ where: { schoolId: auth.schoolId }, data: { ...(maxLoanDays !== undefined ? { maxLoanDays } : {}), ...(maxActiveCopies !== undefined ? { maxActiveCopies } : {}), ...(fineRatePerDay !== undefined ? { fineRatePerDay: new Prisma.Decimal(fineRatePerDay) } : {}) }, select });
+      await tx.auditLog.create({ data: { schoolId: auth.schoolId, userId: auth.user.id, action: "UPDATE", entityType: "LibrarySetting", entityId: updated.id, oldData: jsonValue(current), newData: jsonValue(updated), ipAddress: getClientIp(request) } });
       return updated;
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }));
     return NextResponse.json({ data: serialize(settings) }, { headers: noStoreHeaders });

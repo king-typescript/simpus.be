@@ -48,7 +48,7 @@ export async function POST(request: Request, context: RouteContext) {
   try {
     const created = await serializable(() => prisma.$transaction(async (tx) => {
       const ebook = await tx.ebook.findFirst({
-        where: { id: ebookId, status: "AKTIF", book: { isActive: true } },
+        where: { id: ebookId, schoolId: auth.schoolId, status: "AKTIF", book: { isActive: true } },
         select: {
           id: true,
           fileName: true,
@@ -61,6 +61,7 @@ export async function POST(request: Request, context: RouteContext) {
 
       const existing = await tx.ebookAccess.findFirst({
         where: {
+          schoolId: auth.schoolId,
           ebookId,
           studentId: auth.student.id,
           status: "AKTIF",
@@ -72,6 +73,7 @@ export async function POST(request: Request, context: RouteContext) {
 
       const access = await tx.ebookAccess.create({
         data: {
+          schoolId: auth.schoolId,
           ebookId,
           studentId: auth.student.id,
           accessTokenHash: tokenHash,
@@ -99,6 +101,7 @@ export async function POST(request: Request, context: RouteContext) {
 
       await tx.auditLog.create({
         data: {
+          schoolId: auth.schoolId,
           userId: auth.user.id,
           action: "CREATE",
           entityType: "EbookAccess",

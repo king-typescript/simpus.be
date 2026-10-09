@@ -10,7 +10,6 @@ import {
 
 export const runtime = "nodejs";
 
-const SETTING_KEY = "DEFAULT";
 
 function errorResponse(error: string, status: number) {
   return NextResponse.json({ error }, { status, headers: noStoreHeaders });
@@ -57,6 +56,7 @@ export async function GET(request: Request) {
   const now = new Date();
   const today = startOfUtcDay(now);
   const where = {
+    schoolId: auth.schoolId,
     status: { in: [LoanStatus.AKTIF, LoanStatus.SEBAGIAN_DIKEMBALIKAN] },
     ...(studentId ? { studentId } : {}),
     ...(overdue === "true" ? { dueDate: { lt: today } } : {}),
@@ -66,7 +66,7 @@ export async function GET(request: Request) {
   try {
     const [settings, loans, total] = await prisma.$transaction([
       prisma.librarySetting.findUnique({
-        where: { key: SETTING_KEY },
+        where: { schoolId: auth.schoolId },
         select: { fineRatePerDay: true },
       }),
       prisma.loan.findMany({

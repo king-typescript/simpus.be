@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { DeleteObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 
 import { getRustFsClient, getRustFsConfig } from "@/lib/rustfs";
+import { isUuid } from "@/lib/validation";
 
 export const BOOK_COVER_MAX_BYTES = 5 * 1024 * 1024;
 export const BOOK_COVER_KEY_PREFIX = "book-covers";
@@ -51,12 +52,13 @@ export function detectBookCoverImage(bytes: Uint8Array): BookCoverImage | null {
   return null;
 }
 
-function getBookCoverKey(image: BookCoverImage) {
-  return `${BOOK_COVER_KEY_PREFIX}/${randomUUID()}.${image.extension}`;
+function getBookCoverKey(image: BookCoverImage, schoolId: string) {
+  if (!isUuid(schoolId)) throw new Error("schoolId tidak valid.");
+  return `schools/${schoolId}/${BOOK_COVER_KEY_PREFIX}/${randomUUID()}.${image.extension}`;
 }
 
-export async function saveBookCover(bytes: Uint8Array, image: BookCoverImage) {
-  const key = getBookCoverKey(image);
+export async function saveBookCover(bytes: Uint8Array, image: BookCoverImage, schoolId: string) {
+  const key = getBookCoverKey(image, schoolId);
   const config = getRustFsConfig();
 
   await getRustFsClient().send(new PutObjectCommand({
@@ -75,7 +77,7 @@ export async function saveBookCover(bytes: Uint8Array, image: BookCoverImage) {
   };
 }
 
-const bookCoverKeyPattern = /^book-covers\/[0-9a-f-]{36}\.(?:jpg|png|webp)$/i;
+const bookCoverKeyPattern = /^schools\/[0-9a-f-]{36}\/book-covers\/[0-9a-f-]{36}\.(?:jpg|png|webp)$/i;
 
 export function isBookCoverKey(value: string | null | undefined): value is string {
   return value !== null && value !== undefined && bookCoverKeyPattern.test(value);

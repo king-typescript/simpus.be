@@ -14,7 +14,6 @@ import {
 } from "@/lib/validation";
 
 export const runtime = "nodejs";
-const SETTING_KEY = "DEFAULT";
 const returnStatuses = ["TERSEDIA", "RUSAK", "HILANG"] as const;
 function errorResponse(error: string, status: number) { return NextResponse.json({ error }, { status, headers: noStoreHeaders }); }
 function jsonValue(value: unknown) { return JSON.parse(JSON.stringify(value)); }
@@ -39,36 +38,36 @@ export async function POST(request: Request) {
 
   try {
     const result = await serializable(() => prisma.$transaction(async (tx) => {
-      const item = await tx.loanItem.findUnique({ where: { id: loanItemId }, select: { id: true, loanId: true, copyId: true, returnedAt: true, returnCondition: true, returnNote: true, loan: { select: { id: true, dueDate: true, status: true } }, copy: { select: { id: true, status: true, isActive: true } } } });
-      if (!item) throw new Error("ITEM_NOT_FOUND");
+      const item = await tx.loanItem.findUnique({ where: { id: loanItemId, schoolId: auth.schoolId }, select: { id: true, loanId: true, copyId: true, returnedAt: true, returnCondition: true, returnNote: true, loan: { select: { id: true, schoolId: true, dueDate: true, status: true } }, copy: { select: { id: true, schoolId: true, status: true, isActive: true } } } });
+      if (!item || item.loan.schoolId !== auth.schoolId || item.copy.schoolId !== auth.schoolId) throw new Error("ITEM_NOT_FOUND");
       if (item.returnedAt || item.loan.status === "SELESAI" || item.loan.status === "DIBATALKAN") throw new Error("ALREADY_RETURNED");
       if (!item.copy.isActive || item.copy.status !== "DIPINJAM") throw new Error("COPY_INVALID");
-      const settings = await tx.librarySetting.findUnique({ where: { key: SETTING_KEY }, select: { fineRatePerDay: true } });
+      const settings = await tx.librarySetting.findUnique({ where: { schoolId: auth.schoolId }, select: { fineRatePerDay: true } });
       if (!settings) throw new Error("SETTINGS_NOT_FOUND");
       const returnedAt = new Date();
       const lateDays = calculateDaysLate(item.loan.dueDate, returnedAt);
       const amount = calculateFine(lateDays, settings.fineRatePerDay);
-      const existingFine = await tx.fine.findUnique({ where: { loanItemId }, select: { id: true, type: true, daysLate: true, ratePerDay: true, amount: true, status: true, note: true } });
-      const updatedItem = await tx.loanItem.update({ where: { id: loanItemId }, data: { returnedAt, returnCondition, returnNote, copy: { update: { status: status as BookStatus, conditionNote: returnCondition } } }, select: { id: true, loanId: true, copyId: true, returnedAt: true, returnCondition: true, returnNote: true, copy: { select: { id: true, barcode: true, status: true } } } });
+      const existingFine = await tx.fine.findUnique({ where: { loanItemId, schoolId: auth.schoolId }, select: { id: true, type: true, daysLate: true, ratePerDay: true, amount: true, status: true, note: true } });
+      const updatedItem = await tx.loanItem.update({ where: { id: loanItemId, schoolId: auth.schoolId }, data: { returnedAt, returnCondition, returnNote, copy: { update: { status: status as BookStatus, conditionNote: returnCondition } } }, select: { id: true, loanId: true, copyId: true, returnedAt: true, returnCondition: true, returnNote: true, copy: { select: { id: true, barcode: true, status: true } } } });
       let fineResult: { daysLate: number; ratePerDay: string; amount: string } | null = null;
       if (lateDays > 0) {
         if (!existingFine) {
-          const fine = await tx.fine.create({ data: { loanItemId, daysLate: lateDays, ratePerDay: settings.fineRatePerDay, amount, status: "BELUM_DIBAYAR", note: `Denda keterlambatan ${lateDays} hari.` }, select: { id: true, daysLate: true, ratePerDay: true, amount: true, status: true } });
-          await tx.auditLog.create({ data: { userId: auth.user.id, action: "CREATE", entityType: "Fine", entityId: fine.id, newData: jsonValue(fine), ipAddress: getClientIp(request) } });
+          const fine = await tx.fine.create({ data: { schoolId: auth.schoolId, loanItemId, daysLate: lateDays, ratePerDay: settings.fineRatePerDay, amount, status: "BELUM_DIBAYAR", note: `Denda keterlambatan ${lateDays} hari.` }, select: { id: true, daysLate: true, ratePerDay: true, amount: true, status: true } });
+          await tx.auditLog.create({ data: { schoolId: auth.schoolId, userId: auth.user.id, action: "CREATE", entityType: "Fine", entityId: fine.id, newData: jsonValue(fine), ipAddress: getClientIp(request) } });
           fineResult = { daysLate: fine.daysLate, ratePerDay: fine.ratePerDay.toFixed(2), amount: fine.amount.toFixed(2) };
         } else if (existingFine.status === "BELUM_DIBAYAR") {
           const updatedAmount = existingFine.ratePerDay.mul(lateDays);
-          const fine = await tx.fine.update({ where: { id: existingFine.id }, data: { daysLate: lateDays, amount: updatedAmount, note: `Denda keterlambatan ${lateDays} hari.` }, select: { id: true, daysLate: true, ratePerDay: true, amount: true, status: true } });
-          await tx.auditLog.create({ data: { userId: auth.user.id, action: "UPDATE", entityType: "Fine", entityId: fine.id, oldData: jsonValue(existingFine), newData: jsonValue(fine), ipAddress: getClientIp(request) } });
+          const fine = await tx.fine.update({ where: { id: existingFine.id, schoolId: auth.schoolId }, data: { daysLate: lateDays, amount: updatedAmount, note: `Denda keterlambatan ${lateDays} hari.` }, select: { id: true, daysLate: true, ratePerDay: true, amount: true, status: true } });
+          await tx.auditLog.create({ data: { schoolId: auth.schoolId, userId: auth.user.id, action: "UPDATE", entityType: "Fine", entityId: fine.id, oldData: jsonValue(existingFine), newData: jsonValue(fine), ipAddress: getClientIp(request) } });
           fineResult = { daysLate: fine.daysLate, ratePerDay: fine.ratePerDay.toFixed(2), amount: fine.amount.toFixed(2) };
         } else {
           fineResult = { daysLate: existingFine.daysLate, ratePerDay: existingFine.ratePerDay.toFixed(2), amount: existingFine.amount.toFixed(2) };
         }
       }
-      const openItems = await tx.loanItem.count({ where: { loanId: item.loanId, returnedAt: null } });
-      const returnedItems = await tx.loanItem.count({ where: { loanId: item.loanId, returnedAt: { not: null } } });
-      await tx.loan.update({ where: { id: item.loanId }, data: { status: openItems === 0 ? "SELESAI" : returnedItems > 0 ? "SEBAGIAN_DIKEMBALIKAN" : "AKTIF", returnedAt: openItems === 0 ? returnedAt : null } });
-      await tx.auditLog.create({ data: { userId: auth.user.id, action: "RETURN", entityType: "LoanItem", entityId: loanItemId, oldData: jsonValue(item), newData: jsonValue({ item: updatedItem, daysLate: lateDays, fine: fineResult }), ipAddress: getClientIp(request) } });
+      const openItems = await tx.loanItem.count({ where: { schoolId: auth.schoolId, loanId: item.loanId, returnedAt: null } });
+      const returnedItems = await tx.loanItem.count({ where: { schoolId: auth.schoolId, loanId: item.loanId, returnedAt: { not: null } } });
+      await tx.loan.update({ where: { id: item.loanId, schoolId: auth.schoolId }, data: { status: openItems === 0 ? "SELESAI" : returnedItems > 0 ? "SEBAGIAN_DIKEMBALIKAN" : "AKTIF", returnedAt: openItems === 0 ? returnedAt : null } });
+      await tx.auditLog.create({ data: { schoolId: auth.schoolId, userId: auth.user.id, action: "RETURN", entityType: "LoanItem", entityId: loanItemId, oldData: jsonValue(item), newData: jsonValue({ item: updatedItem, daysLate: lateDays, fine: fineResult }), ipAddress: getClientIp(request) } });
       return { item: updatedItem, daysLate: lateDays, fine: fineResult };
     }, { isolationLevel: "Serializable" }));
     return NextResponse.json({ data: result }, { headers: noStoreHeaders });

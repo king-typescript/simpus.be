@@ -65,12 +65,12 @@ export async function GET(request: Request) {
   const { page, limit } = pagination.value;
   const search = searchResult.value;
 
-  const where = search ? { name: { contains: search, mode: "insensitive" as const } } : {};
+  const where = { schoolId: auth.schoolId, ...(search ? { name: { contains: search, mode: "insensitive" as const } } : {}) };
 
   try {
     const [authors, total] = await prisma.$transaction([
-      prisma.author.findMany({ where, select: authorSelect, orderBy: [{ name: "asc" }, { id: "asc" }], skip: (page - 1) * limit, take: limit }),
-      prisma.author.count({ where }),
+      prisma.author.findMany({ where: { ...where, schoolId: auth.schoolId }, select: authorSelect, orderBy: [{ name: "asc" }, { id: "asc" }], skip: (page - 1) * limit, take: limit }),
+      prisma.author.count({ where: { ...where, schoolId: auth.schoolId } }),
     ]);
 
     return NextResponse.json({ data: authors.map(toAuthorResponse), pagination: { page, limit, total, totalPages: Math.ceil(total / limit) } }, { headers: noStoreHeaders });
@@ -94,8 +94,8 @@ export async function POST(request: Request) {
 
   try {
     const author = await prisma.$transaction(async (tx) => {
-      const created = await tx.author.create({ data: { name }, select: authorSelect });
-      await tx.auditLog.create({ data: { userId: auth.user.id, action: "CREATE", entityType: "Author", entityId: created.id, newData: jsonValue(created), ipAddress: getClientIp(request) } });
+      const created = await tx.author.create({ data: { schoolId: auth.schoolId, name }, select: authorSelect });
+      await tx.auditLog.create({ data: { schoolId: auth.schoolId, userId: auth.user.id, action: "CREATE", entityType: "Author", entityId: created.id, newData: jsonValue(created), ipAddress: getClientIp(request) } });
       return created;
     });
     return NextResponse.json({ data: toAuthorResponse(author) }, { status: 201, headers: noStoreHeaders });

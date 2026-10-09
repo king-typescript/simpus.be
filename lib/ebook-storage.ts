@@ -1,6 +1,10 @@
 import "server-only";
 
+import { createReadStream } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { stat } from "node:fs/promises";
+import unzipper from "unzipper";
+import { XMLParser } from "fast-xml-parser";
 import {
   DeleteObjectCommand,
   GetObjectCommand,
@@ -13,11 +17,25 @@ import {
   getRustFsClient,
   getRustFsPresigningClient,
 } from "@/lib/rustfs";
+import { isUuid } from "@/lib/validation";
 
 const DEFAULT_MAX_BYTES = 100 * 1024 * 1024;
 const DEFAULT_PRESIGNED_URL_TTL = 5 * 60;
 const MAX_PRESIGNED_URL_TTL = 15 * 60;
 const EBOOK_KEY_PREFIX = "ebooks";
+const SCHOOL_KEY_PREFIX = "schools";
+const EPUB_MAX_ENTRIES = 2_000;
+const EPUB_MAX_ENTRY_UNCOMPRESSED_BYTES = 50 * 1024 * 1024;
+const EPUB_MAX_TOTAL_UNCOMPRESSED_BYTES = 200 * 1024 * 1024;
+const EPUB_MIMETYPE = "application/epub+zip";
+const EPUB_CONTAINER_PATH = "META-INF/container.xml";
+
+const epubXmlParser = new XMLParser({
+  ignoreAttributes: false,
+  removeNSPrefix: true,
+  processEntities: false,
+  allowBooleanAttributes: false,
+});
 
 export const EBOOK_CONTENT_TYPES = {
   PDF: "application/pdf",
@@ -110,28 +128,134 @@ function isZip(bytes: Uint8Array): boolean {
     );
 }
 
-export function detectEbookFile(
+function isSafeEpubPath(path: string): boolean {
+  return path.length > 0
+    && !path.startsWith("/")
+    && !path.includes("\\")
+    && !path.split("/").includes("..")
+    && !path.includes("\0");
+}
+
+async function validateEpubFilePath(filePath: string): Promise<boolean> {
+  let parser: unzipper.ParseStream;
+  try {
+    parser = createReadStream(filePath).pipe(unzipper.Parse({ forceStream: true }));
+  } catch {
+    return false;
+  }
+
+  const entries = new Set<string>();
+  let entryCount = 0;
+  let totalUncompressedBytes = 0;
+  let mimetypeContent: Buffer | null = null;
+  let mimetypeMethod: number | null = null;
+  let containerContent: Buffer | null = null;
+
+  try {
+    for await (const entry of parser) {
+      entryCount += 1;
+      if (entryCount > EPUB_MAX_ENTRIES) return false;
+
+      const path = entry.path;
+      if (!isSafeEpubPath(path) || entries.has(path) || entry.type === "Directory") {
+        entry.autodrain();
+        return false;
+      }
+      entries.add(path);
+
+      if (entry.vars.flags & 0x1) {
+        entry.autodrain();
+        return false;
+      }
+
+      const uncompressedSize = Number(entry.vars.uncompressedSize);
+      const compressedSize = Number(entry.vars.compressedSize);
+      if (
+        !Number.isSafeInteger(uncompressedSize)
+        || !Number.isSafeInteger(compressedSize)
+        || uncompressedSize > EPUB_MAX_ENTRY_UNCOMPRESSED_BYTES
+        || (compressedSize > 0 && uncompressedSize / compressedSize > 1000)
+      ) {
+        entry.autodrain();
+        return false;
+      }
+
+      totalUncompressedBytes += uncompressedSize;
+      if (totalUncompressedBytes > EPUB_MAX_TOTAL_UNCOMPRESSED_BYTES) {
+        entry.autodrain();
+        return false;
+      }
+
+      if (path === "mimetype") {
+        mimetypeMethod = entry.vars.compressionMethod;
+        mimetypeContent = await entry.buffer();
+      } else if (path === EPUB_CONTAINER_PATH) {
+        containerContent = await entry.buffer();
+      } else {
+        entry.autodrain();
+      }
+    }
+  } catch {
+    return false;
+  }
+
+  if (
+    !mimetypeContent
+    || mimetypeMethod !== 0
+    || mimetypeContent.toString("utf8") !== EPUB_MIMETYPE
+    || !containerContent
+  ) return false;
+
+  let containerXml: unknown;
+  try {
+    containerXml = epubXmlParser.parse(containerContent.toString("utf8"));
+  } catch {
+    return false;
+  }
+
+  const rootfiles = (containerXml as {
+    container?: { rootfiles?: { rootfile?: unknown } };
+  }).container?.rootfiles?.rootfile;
+  const rootfileList = Array.isArray(rootfiles) ? rootfiles : [rootfiles];
+  if (!rootfiles) return false;
+
+  return rootfileList.some((rootfile) => {
+    if (typeof rootfile !== "object" || rootfile === null) return false;
+    const fullPath = (rootfile as { ["@_full-path"]?: unknown })["@_full-path"];
+    return typeof fullPath === "string" && isSafeEpubPath(fullPath) && entries.has(fullPath);
+  });
+}
+
+export async function validateEpubFile(filePath: string): Promise<boolean> {
+  try {
+    const fileStats = await stat(filePath);
+    if (!fileStats.isFile() || fileStats.size > readMaxFileBytes()) return false;
+    return validateEpubFilePath(filePath);
+  } catch {
+    return false;
+  }
+}
+
+export async function detectEbookFile(
   bytes: Uint8Array,
   fileName: string,
-): EbookUpload | null {
+): Promise<EbookUpload | null> {
   const extension = fileName.toLowerCase().split(".").pop();
-
   if (extension === "pdf" && isPdf(bytes)) {
     return { extension: "pdf", contentType: EBOOK_CONTENT_TYPES.PDF };
   }
-
   if (extension === "epub" && isZip(bytes)) {
     return { extension: "epub", contentType: EBOOK_CONTENT_TYPES.EPUB };
   }
-
   return null;
 }
 
-function getEbookKey(file: EbookUpload): string {
-  return `${EBOOK_KEY_PREFIX}/${randomUUID()}.${file.extension}`;
+function getEbookKey(file: EbookUpload, schoolId: string): string {
+  if (!isUuid(schoolId)) throw new Error("schoolId tidak valid.");
+  return `${SCHOOL_KEY_PREFIX}/${schoolId}/${EBOOK_KEY_PREFIX}/${randomUUID()}.${file.extension}`;
 }
 
-const ebookKeyPattern = /^ebooks\/[0-9a-f-]{36}\.(?:pdf|epub)$/i;
+const ebookKeyPattern = /^schools\/[0-9a-f-]{36}\/ebooks\/[0-9a-f-]{36}\.(?:pdf|epub)$/i;
 
 export function isEbookKey(value: string | null | undefined): value is string {
   return value !== null
@@ -147,14 +271,44 @@ export function assertEbookSize(size: number): void {
   }
 }
 
+export async function saveEbookFile(
+  filePath: string,
+  fileName: string,
+  file: EbookUpload,
+  schoolId: string,
+): Promise<SavedEbook> {
+  const fileStats = await stat(filePath);
+  assertEbookSize(fileStats.size);
+
+  const key = getEbookKey(file, schoolId);
+  await getRustFsClient().send(new PutObjectCommand({
+    Bucket: readEbookBucket(),
+    Key: key,
+    Body: createReadStream(filePath),
+    ContentLength: fileStats.size,
+    ContentType: file.contentType,
+    ContentDisposition: "inline",
+    CacheControl: "private, no-store",
+    Metadata: { filetype: file.extension },
+  }));
+
+  return {
+    key,
+    fileName,
+    contentType: file.contentType,
+    size: fileStats.size,
+  };
+}
+
 export async function saveEbook(
   bytes: Uint8Array,
   fileName: string,
   file: EbookUpload,
+  schoolId: string,
 ): Promise<SavedEbook> {
   assertEbookSize(bytes.byteLength);
 
-  const key = getEbookKey(file);
+  const key = getEbookKey(file, schoolId);
   await getRustFsClient().send(new PutObjectCommand({
     Bucket: readEbookBucket(),
     Key: key,
@@ -166,12 +320,7 @@ export async function saveEbook(
     Metadata: { filetype: file.extension },
   }));
 
-  return {
-    key,
-    fileName,
-    contentType: file.contentType,
-    size: bytes.byteLength,
-  };
+  return { key, fileName, contentType: file.contentType, size: bytes.byteLength };
 }
 
 export async function getEbookFileMetadata(key: string) {

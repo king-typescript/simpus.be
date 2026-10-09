@@ -110,6 +110,7 @@ export async function GET(request: Request) {
 
   try {
     const rows = await getAllPeminjamanReport({
+      schoolId: auth.schoolId,
       from: filters.dateRange.from,
       toExclusive: filters.dateRange.toExclusive,
       status: filters.status,

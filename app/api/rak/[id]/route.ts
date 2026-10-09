@@ -55,7 +55,7 @@ export async function GET(_request: Request, context: RouteContext) {
   const { id } = await context.params;
   if (!isUuid(id)) return errorResponse("ID rak tidak valid.", 422);
   try {
-    const shelf = await prisma.shelf.findUnique({ where: { id }, select: shelfSelect });
+    const shelf = await prisma.shelf.findUnique({ where: { id, schoolId: auth.schoolId }, select: shelfSelect });
     return shelf ? NextResponse.json({ data: toShelfResponse(shelf) }, { headers: noStoreHeaders }) : errorResponse("Rak tidak ditemukan.", 404);
   } catch {
     return errorResponse("Terjadi kesalahan pada server.", 500);
@@ -93,12 +93,12 @@ export async function PATCH(request: Request, context: RouteContext) {
 
   try {
     const shelf = await prisma.$transaction(async (tx) => {
-      const current = await tx.shelf.findUnique({ where: { id }, select: shelfSelect });
+      const current = await tx.shelf.findUnique({ where: { id, schoolId: auth.schoolId }, select: shelfSelect });
       if (!current) return null;
       const unchanged = (data.code === undefined || data.code === current.code) && (data.name === undefined || data.name === current.name) && (data.location === undefined || data.location === current.location);
       if (unchanged) return current;
-      const updated = await tx.shelf.update({ where: { id }, data, select: shelfSelect });
-      await tx.auditLog.create({ data: { userId: auth.user.id, action: "UPDATE", entityType: "Shelf", entityId: id, oldData: jsonValue(current), newData: jsonValue(updated), ipAddress: getClientIp(request) } });
+      const updated = await tx.shelf.update({ where: { id, schoolId: auth.schoolId }, data, select: shelfSelect });
+      await tx.auditLog.create({ data: { schoolId: auth.schoolId, userId: auth.user.id, action: "UPDATE", entityType: "Shelf", entityId: id, oldData: jsonValue(current), newData: jsonValue(updated), ipAddress: getClientIp(request) } });
       return updated;
     });
     return shelf ? NextResponse.json({ data: toShelfResponse(shelf) }, { headers: noStoreHeaders }) : errorResponse("Rak tidak ditemukan.", 404);
@@ -118,11 +118,11 @@ export async function DELETE(request: Request, context: RouteContext) {
 
   try {
     const deleted = await prisma.$transaction(async (tx) => {
-      const shelf = await tx.shelf.findUnique({ where: { id }, select: shelfDeleteSelect });
+      const shelf = await tx.shelf.findUnique({ where: { id, schoolId: auth.schoolId }, select: shelfDeleteSelect });
       if (!shelf) return false;
       if (shelf._count.copies > 0) throw new Error("SHELF_HAS_COPIES");
-      await tx.shelf.delete({ where: { id } });
-      await tx.auditLog.create({ data: { userId: auth.user.id, action: "DELETE", entityType: "Shelf", entityId: id, oldData: jsonValue(shelf), ipAddress: getClientIp(request) } });
+      await tx.shelf.delete({ where: { id, schoolId: auth.schoolId } });
+      await tx.auditLog.create({ data: { schoolId: auth.schoolId, userId: auth.user.id, action: "DELETE", entityType: "Shelf", entityId: id, oldData: jsonValue(shelf), ipAddress: getClientIp(request) } });
       return true;
     }, { isolationLevel: "Serializable" });
     return deleted ? new NextResponse(null, { status: 204 }) : errorResponse("Rak tidak ditemukan.", 404);

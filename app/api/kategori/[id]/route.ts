@@ -39,7 +39,7 @@ export async function GET(_request: Request, context: RouteContext) {
   if (!isUuid(id)) return errorResponse("ID kategori tidak valid.", 422);
 
   try {
-    const category = await prisma.category.findFirst({ where: { id, isActive: true }, select: categorySelect });
+    const category = await prisma.category.findFirst({ where: { id, schoolId: auth.schoolId, isActive: true }, select: categorySelect });
     return category ? NextResponse.json({ data: toCategoryResponse(category) }, { headers: noStoreHeaders }) : errorResponse("Kategori tidak ditemukan.", 404);
   } catch {
     return errorResponse("Terjadi kesalahan pada server.", 500);
@@ -77,10 +77,10 @@ export async function PATCH(request: Request, context: RouteContext) {
 
   try {
     const category = await prisma.$transaction(async (tx) => {
-      const current = await tx.category.findFirst({ where: { id, isActive: true }, select: categorySelect });
+      const current = await tx.category.findFirst({ where: { id, schoolId: auth.schoolId, isActive: true }, select: categorySelect });
       if (!current) return null;
-      const updated = await tx.category.update({ where: { id }, data, select: categorySelect });
-      await tx.auditLog.create({ data: { userId: auth.user.id, action: "UPDATE", entityType: "Category", entityId: id, oldData: jsonValue(current), newData: jsonValue(updated), ipAddress: getClientIp(request) } });
+      const updated = await tx.category.update({ where: { id, schoolId: auth.schoolId }, data, select: categorySelect });
+      await tx.auditLog.create({ data: { schoolId: auth.schoolId, userId: auth.user.id, action: "UPDATE", entityType: "Category", entityId: id, oldData: jsonValue(current), newData: jsonValue(updated), ipAddress: getClientIp(request) } });
       return updated;
     });
     return category ? NextResponse.json({ data: toCategoryResponse(category) }, { headers: noStoreHeaders }) : errorResponse("Kategori tidak ditemukan.", 404);
@@ -99,13 +99,13 @@ export async function DELETE(request: Request, context: RouteContext) {
   try {
     const deactivated = await prisma.$transaction(async (tx) => {
       const category = await tx.category.findFirst({
-        where: { id, isActive: true },
+        where: { id, schoolId: auth.schoolId, isActive: true },
         select: { ...categorySelect, _count: { select: { books: true } } },
       });
       if (!category) return false;
       if (category._count.books > 0) throw new Error("CATEGORY_HAS_BOOKS");
-      await tx.category.update({ where: { id }, data: { isActive: false } });
-      await tx.auditLog.create({ data: { userId: auth.user.id, action: "DEACTIVATE", entityType: "Category", entityId: id, oldData: jsonValue(category), newData: jsonValue({ ...category, isActive: false }), ipAddress: getClientIp(request) } });
+      await tx.category.update({ where: { id, schoolId: auth.schoolId }, data: { isActive: false } });
+      await tx.auditLog.create({ data: { schoolId: auth.schoolId, userId: auth.user.id, action: "DEACTIVATE", entityType: "Category", entityId: id, oldData: jsonValue(category), newData: jsonValue({ ...category, isActive: false }), ipAddress: getClientIp(request) } });
       return true;
     }, { isolationLevel: "Serializable" });
     return deactivated ? new NextResponse(null, { status: 204 }) : errorResponse("Kategori tidak ditemukan.", 404);

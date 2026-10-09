@@ -29,7 +29,7 @@ export async function POST(request: Request, context: RouteContext) {
   if (!isUuid(id)) return errorResponse("ID akses tidak valid.", 422);
 
   try {
-    const access = await extendEbookAccess(id, auth.student.id, new Date(), {
+    const access = await extendEbookAccess(id, auth.student.id, auth.schoolId, new Date(), {
       userId: auth.user.id,
       ipAddress: getClientIp(request),
     });

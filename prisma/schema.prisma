@@ -63,54 +63,98 @@ enum PaymentMethod {
 
 model LibrarySetting {
   id              String   @id @default(uuid())
-  key             String   @unique @default("DEFAULT")
+  schoolId        String   @unique
   maxLoanDays     Int      @default(7)
   maxActiveCopies Int      @default(3)
   fineRatePerDay  Decimal  @default(0) @db.Decimal(12, 2)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
   @@map("library_settings")
 }
 
 model User {
-  id           String     @id @default(uuid())
-  role         UserRole   @default(SISWA)
-  status       UserStatus @default(AKTIF)
-  username     String     @unique
-  passwordHash String
-  name         String?
-  lastLoginAt  DateTime?
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
+  id                 String     @id @default(uuid())
+  schoolId           String
+  role               UserRole   @default(SISWA)
+  status             UserStatus @default(AKTIF)
+  mustChangePassword Boolean    @default(false)
+  username           String
+  passwordHash       String
+  name               String?
+  lastLoginAt        DateTime?
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
 
+  school           School        @relation(fields: [schoolId], references: [id])
   student          Student?
   processedLoans   Loan[]        @relation("LoanProcessedBy")
   receivedPayments FinePayment[]
   auditLogs        AuditLog[]
 
-  @@index([role])
+  @@unique([id, schoolId])
+  @@unique([schoolId, username])
+  @@index([schoolId, role])
   @@index([status])
   @@map("users")
 }
 
+model School {
+  id        String   @id @default(uuid())
+  code      String   @unique
+  name      String
+  address   String?
+  phone     String?
+  email     String?
+  logoUrl   String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  settings      LibrarySetting[]
+  users         User[]
+  students      Student[]
+  authors       Author[]
+  categories    Category[]
+  books         Book[]
+  ebooks        Ebook[]
+  ebookAccesses EbookAccess[]
+  shelves       Shelf[]
+  bookCopies    BookCopy[]
+  loans         Loan[]
+  loanItems     LoanItem[]
+  fines         Fine[]
+  finePayments  FinePayment[]
+  auditLogs     AuditLog[]
+
+  @@map("schools")
+}
+
 model Student {
   id                String   @id @default(uuid())
+  schoolId          String
   userId            String   @unique
-  nis               String   @unique
+  nis               String
   name              String
   className         String
-  libraryCardNumber String   @unique
+  libraryCardNumber String
   phone             String?
   isActive          Boolean  @default(true)
   joinedAt          DateTime @default(now())
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
-  user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  loans Loan[]
+  school        School        @relation(fields: [schoolId], references: [id])
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  loans         Loan[]
   ebookAccesses EbookAccess[]
 
+  @@unique([id, schoolId])
+  @@unique([schoolId, nis])
+  @@unique([schoolId, libraryCardNumber])
+  @@index([schoolId])
   @@index([name])
   @@index([className])
   @@map("students")
@@ -118,31 +162,42 @@ model Student {
 
 model Author {
   id        String   @id @default(uuid())
+  schoolId  String
   name      String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  books Book[]
+  school School @relation(fields: [schoolId], references: [id])
+  books  Book[]
 
+  @@index([schoolId])
   @@index([name])
   @@map("authors")
 }
 
 model Category {
   id          String   @id @default(uuid())
+  schoolId    String
   name        String
-  ddcCode     String   @unique
+  ddcCode     String
   isActive    Boolean  @default(true)
   description String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  books Book[]
+  school School @relation(fields: [schoolId], references: [id])
+  books  Book[]
+
+  @@unique([id, schoolId])
+  @@unique([schoolId, ddcCode])
+  @@index([schoolId])
   @@map("categories")
 }
+
 model Book {
   id              String   @id @default(uuid())
-  isbn            String?  @unique
+  schoolId        String
+  isbn            String?
   title           String
   isActive        Boolean  @default(true)
   publisher       String?
@@ -154,21 +209,26 @@ model Book {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  category Category   @relation(fields: [categoryId], references: [id])
+  school   School     @relation(fields: [schoolId], references: [id])
+  category Category   @relation(fields: [categoryId, schoolId], references: [id, schoolId])
   authors  Author[]
   copies   BookCopy[]
   ebook    Ebook?
 
+  @@unique([schoolId, isbn])
+  @@unique([id, schoolId])
+  @@index([schoolId])
   @@index([title])
-  @@index([categoryId])
+  @@index([schoolId, categoryId])
   @@index([isActive])
   @@map("books")
 }
 
 model Ebook {
   id          String      @id @default(uuid())
+  schoolId    String
   bookId      String      @unique
-  fileKey     String      @unique
+  fileKey     String
   fileName    String
   contentType String
   fileSize    BigInt
@@ -176,15 +236,20 @@ model Ebook {
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
 
-  book     Book          @relation(fields: [bookId], references: [id], onDelete: Restrict)
+  school   School        @relation(fields: [schoolId], references: [id])
+  book     Book          @relation(fields: [bookId, schoolId], references: [id, schoolId], onDelete: Restrict)
   accesses EbookAccess[]
 
+  @@unique([id, schoolId])
+  @@unique([bookId, schoolId])
+  @@unique([schoolId, fileKey])
   @@index([status])
   @@map("ebooks")
 }
 
 model EbookAccess {
   id              String            @id @default(uuid())
+  schoolId        String
   ebookId         String
   studentId       String
   accessTokenHash String            @unique
@@ -193,12 +258,13 @@ model EbookAccess {
   returnedAt      DateTime?
   lastAccessedAt  DateTime?
   extensionCount  Int               @default(0)
-  status          EbookAccessStatus  @default(AKTIF)
+  status          EbookAccessStatus @default(AKTIF)
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
 
-  ebook   Ebook   @relation(fields: [ebookId], references: [id], onDelete: Restrict)
-  student Student @relation(fields: [studentId], references: [id], onDelete: Restrict)
+  school  School  @relation(fields: [schoolId], references: [id])
+  ebook   Ebook   @relation(fields: [ebookId, schoolId], references: [id, schoolId], onDelete: Restrict)
+  student Student @relation(fields: [studentId, schoolId], references: [id, schoolId], onDelete: Restrict)
 
   @@index([studentId, status])
   @@index([ebookId, status])
@@ -208,33 +274,43 @@ model EbookAccess {
 
 model Shelf {
   id        String   @id @default(uuid())
-  code      String   @unique
+  schoolId  String
+  code      String
   name      String
   location  String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  school School     @relation(fields: [schoolId], references: [id])
   copies BookCopy[]
 
+  @@unique([id, schoolId])
+  @@unique([schoolId, code])
+  @@index([schoolId])
   @@map("shelves")
 }
 
 model BookCopy {
   id            String     @id @default(uuid())
+  schoolId      String
   bookId        String
   shelfId       String?
   isActive      Boolean    @default(true)
-  barcode       String     @unique
+  barcode       String
   status        BookStatus @default(TERSEDIA)
   conditionNote String?
   acquiredAt    DateTime?
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
 
-  book      Book       @relation(fields: [bookId], references: [id])
-  shelf     Shelf?     @relation(fields: [shelfId], references: [id], onDelete: SetNull)
+  school    School     @relation(fields: [schoolId], references: [id])
+  book      Book       @relation(fields: [bookId, schoolId], references: [id, schoolId])
+  shelf     Shelf?     @relation(fields: [shelfId, schoolId], references: [id, schoolId], onDelete: Restrict)
   loanItems LoanItem[]
 
+  @@unique([id, schoolId])
+  @@unique([schoolId, barcode])
+  @@index([schoolId, status])
   @@index([bookId])
   @@index([shelfId])
   @@index([status])
@@ -244,6 +320,7 @@ model BookCopy {
 
 model Loan {
   id            String     @id @default(uuid())
+  schoolId      String
   studentId     String
   processedById String
   loanDate      DateTime   @default(now())
@@ -254,11 +331,14 @@ model Loan {
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
 
-  student     Student    @relation(fields: [studentId], references: [id])
-  processedBy User       @relation("LoanProcessedBy", fields: [processedById], references: [id])
+  school      School     @relation(fields: [schoolId], references: [id])
+  student     Student    @relation(fields: [studentId, schoolId], references: [id, schoolId])
+  processedBy User       @relation("LoanProcessedBy", fields: [processedById, schoolId], references: [id, schoolId])
   items       LoanItem[]
 
+  @@unique([id, schoolId])
   @@index([studentId, status])
+  @@index([schoolId, status])
   @@index([processedById])
   @@index([dueDate])
   @@map("loans")
@@ -266,6 +346,7 @@ model Loan {
 
 model LoanItem {
   id              String    @id @default(uuid())
+  schoolId        String
   loanId          String
   copyId          String
   returnedAt      DateTime?
@@ -274,10 +355,12 @@ model LoanItem {
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
-  loan Loan     @relation(fields: [loanId], references: [id], onDelete: Cascade)
-  copy BookCopy @relation(fields: [copyId], references: [id])
-  fine Fine?
+  school School   @relation(fields: [schoolId], references: [id])
+  loan   Loan     @relation(fields: [loanId, schoolId], references: [id, schoolId], onDelete: Cascade)
+  copy   BookCopy @relation(fields: [copyId, schoolId], references: [id, schoolId])
+  fine   Fine?
 
+  @@unique([id, schoolId])
   @@index([loanId])
   @@index([copyId])
   @@map("loan_items")
@@ -285,6 +368,7 @@ model LoanItem {
 
 model Fine {
   id         String     @id @default(uuid())
+  schoolId   String
   loanItemId String     @unique
   type       FineType   @default(TERLAMBAT)
   daysLate   Int        @default(0)
@@ -295,26 +379,34 @@ model Fine {
   createdAt  DateTime   @default(now())
   updatedAt  DateTime   @updatedAt
 
-  loanItem LoanItem     @relation(fields: [loanItemId], references: [id])
+  school   School       @relation(fields: [schoolId], references: [id])
+  loanItem LoanItem     @relation(fields: [loanItemId, schoolId], references: [id, schoolId])
   payment  FinePayment?
 
+  @@unique([id, schoolId])
+  @@unique([loanItemId, schoolId])
+  @@index([schoolId, status])
   @@index([status])
   @@map("fines")
 }
 
 model FinePayment {
   id            String        @id @default(uuid())
+  schoolId      String
   fineId        String        @unique
   receivedById  String
   amount        Decimal       @db.Decimal(12, 2)
   paymentMethod PaymentMethod @default(CASH)
-  receiptNumber String        @unique
+  receiptNumber String
   paidAt        DateTime      @default(now())
   note          String?
 
-  fine       Fine @relation(fields: [fineId], references: [id])
-  receivedBy User @relation(fields: [receivedById], references: [id])
+  school     School @relation(fields: [schoolId], references: [id])
+  fine       Fine   @relation(fields: [fineId, schoolId], references: [id, schoolId])
+  receivedBy User   @relation(fields: [receivedById, schoolId], references: [id, schoolId])
 
+  @@unique([fineId, schoolId])
+  @@unique([schoolId, receiptNumber])
   @@index([receivedById])
   @@index([paidAt])
   @@map("fine_payments")
@@ -322,6 +414,7 @@ model FinePayment {
 
 model AuditLog {
   id         String   @id @default(uuid())
+  schoolId   String?
   userId     String?
   action     String
   entityType String
@@ -331,7 +424,8 @@ model AuditLog {
   ipAddress  String?
   createdAt  DateTime @default(now())
 
-  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+  school School? @relation(fields: [schoolId], references: [id], onDelete: SetNull)
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([userId])
   @@index([entityType, entityId])

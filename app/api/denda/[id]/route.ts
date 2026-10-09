@@ -113,7 +113,7 @@ export async function GET(_request: Request, context: RouteContext) {
   if (!isUuid(id)) return errorResponse("ID denda tidak valid.", 422);
 
   try {
-    const fine = await prisma.fine.findUnique({ where: { id }, select: fineSelect });
+    const fine = await prisma.fine.findUnique({ where: { id, schoolId: auth.schoolId }, select: fineSelect });
     return fine ? NextResponse.json({ data: serializeFine(fine) }, { headers: noStoreHeaders }) : errorResponse("Denda tidak ditemukan.", 404);
   } catch {
     return errorResponse("Terjadi kesalahan pada server.", 500);
@@ -151,7 +151,7 @@ export async function POST(request: Request, context: RouteContext) {
 
   try {
     const result = await serializable(() => prisma.$transaction(async (tx) => {
-      const fine = await tx.fine.findUnique({ where: { id }, select: fineSelect });
+      const fine = await tx.fine.findUnique({ where: { id, schoolId: auth.schoolId }, select: fineSelect });
       if (!fine) throw new Error("FINE_NOT_FOUND");
       if (fine.status !== "BELUM_DIBAYAR") throw new Error("FINE_ALREADY_SETTLED");
       if (fine.payment) throw new Error("PAYMENT_EXISTS");
@@ -161,14 +161,14 @@ export async function POST(request: Request, context: RouteContext) {
       if (!paymentAmount.equals(fine.amount)) throw new Error("AMOUNT_MISMATCH");
 
       const payment = await tx.finePayment.create({
-        data: { fineId: id, receivedById: auth.user.id, amount: paymentAmount, paymentMethod: "CASH", receiptNumber, note },
+        data: { schoolId: auth.schoolId, fineId: id, receivedById: auth.user.id, amount: paymentAmount, paymentMethod: "CASH", receiptNumber, note },
         select: { id: true, fineId: true, amount: true, paymentMethod: true, receiptNumber: true, paidAt: true, note: true, receivedBy: { select: { id: true, name: true, username: true } } },
       });
-      await tx.fine.update({ where: { id }, data: { status: "LUNAS" } });
-      const updatedFine = await tx.fine.findUniqueOrThrow({ where: { id }, select: fineSelect });
+      await tx.fine.update({ where: { id, schoolId: auth.schoolId }, data: { status: "LUNAS" } });
+      const updatedFine = await tx.fine.findUniqueOrThrow({ where: { id, schoolId: auth.schoolId }, select: fineSelect });
 
       await tx.auditLog.create({
-        data: { userId: auth.user.id, action: "PAYMENT", entityType: "Fine", entityId: id, oldData: jsonValue(fine), newData: jsonValue(updatedFine), ipAddress },
+        data: { schoolId: auth.schoolId, userId: auth.user.id, action: "PAYMENT", entityType: "Fine", entityId: id, oldData: jsonValue(fine), newData: jsonValue(updatedFine), ipAddress },
       });
 
       return { fine: updatedFine, payment };

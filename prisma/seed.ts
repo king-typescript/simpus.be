@@ -39,11 +39,17 @@ async function main() {
   ]);
 
   await prisma.$transaction(async (tx) => {
+    const school = await tx.school.upsert({
+      where: { code: "DEFAULT" },
+      update: { name: "Sekolah Default", isActive: true },
+      create: { code: "DEFAULT", name: "Sekolah Default" },
+    });
+
     await tx.librarySetting.upsert({
-      where: { key: "DEFAULT" },
+      where: { schoolId: school.id },
       update: {},
       create: {
-        key: "DEFAULT",
+        schoolId: school.id,
         maxLoanDays: 7,
         maxActiveCopies: 3,
         fineRatePerDay: "1000.00",
@@ -51,13 +57,14 @@ async function main() {
     });
 
     const librarian = await tx.user.upsert({
-      where: { username: "admin" },
+      where: { schoolId_username: { schoolId: school.id, username: "admin" } },
       update: {
         role: "PUSTAKAWAN",
         status: "AKTIF",
         name: "Administrator Perpustakaan",
       },
       create: {
+        schoolId: school.id,
         username: "admin",
         passwordHash: adminPasswordHash,
         role: "PUSTAKAWAN",
@@ -67,13 +74,14 @@ async function main() {
     });
 
     const studentUser = await tx.user.upsert({
-      where: { username: "siswa001" },
+      where: { schoolId_username: { schoolId: school.id, username: "siswa001" } },
       update: {
         role: "SISWA",
         status: "AKTIF",
         name: "Budi Santoso",
       },
       create: {
+        schoolId: school.id,
         username: "siswa001",
         passwordHash: studentPasswordHash,
         role: "SISWA",
@@ -85,6 +93,7 @@ async function main() {
     const student = await tx.student.upsert({
       where: { userId: studentUser.id },
       update: {
+        schoolId: school.id,
         nis: "20260001",
         name: "Budi Santoso",
         className: "XII IPA 1",
@@ -93,6 +102,7 @@ async function main() {
         isActive: true,
       },
       create: {
+        schoolId: school.id,
         userId: studentUser.id,
         nis: "20260001",
         name: "Budi Santoso",
@@ -104,12 +114,13 @@ async function main() {
     });
 
     const category = await tx.category.upsert({
-      where: { ddcCode: "000" },
+      where: { schoolId_ddcCode: { schoolId: school.id, ddcCode: "000" } },
       update: {
         name: "Karya Umum",
         description: "Pengetahuan umum dan komputer.",
       },
       create: {
+        schoolId: school.id,
         name: "Karya Umum",
         ddcCode: "000",
         description: "Pengetahuan umum dan komputer.",
@@ -117,12 +128,13 @@ async function main() {
     });
 
     const shelf = await tx.shelf.upsert({
-      where: { code: "RAK-A1" },
+      where: { schoolId_code: { schoolId: school.id, code: "RAK-A1" } },
       update: {
         name: "Rak A1",
         location: "Ruang Utama",
       },
       create: {
+        schoolId: school.id,
         code: "RAK-A1",
         name: "Rak A1",
         location: "Ruang Utama",
@@ -130,17 +142,17 @@ async function main() {
     });
 
     const existingAuthor = await tx.author.findFirst({
-      where: { name: "Tere Liye" },
+      where: { schoolId: school.id, name: "Tere Liye" },
     });
 
     const author =
       existingAuthor ??
       (await tx.author.create({
-        data: { name: "Tere Liye" },
+        data: { schoolId: school.id, name: "Tere Liye" },
       }));
 
     const book = await tx.book.upsert({
-      where: { isbn: "9786020338682" },
+      where: { schoolId_isbn: { schoolId: school.id, isbn: "9786020338682" } },
       update: {
         title: "Bumi",
         publisher: "Gramedia Pustaka Utama",
@@ -148,6 +160,7 @@ async function main() {
         categoryId: category.id,
       },
       create: {
+        schoolId: school.id,
         isbn: "9786020338682",
         title: "Bumi",
         publisher: "Gramedia Pustaka Utama",
@@ -169,13 +182,14 @@ async function main() {
     });
 
     const existingBookCopy = await tx.bookCopy.findUnique({
-      where: { barcode: "BC-000001" },
+      where: { schoolId_barcode: { schoolId: school.id, barcode: "BC-000001" } },
     });
 
     const bookCopy =
       existingBookCopy ??
       (await tx.bookCopy.create({
         data: {
+          schoolId: school.id,
           bookId: book.id,
           shelfId: shelf.id,
           barcode: "BC-000001",

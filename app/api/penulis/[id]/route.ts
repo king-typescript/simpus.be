@@ -48,7 +48,7 @@ export async function GET(_request: Request, context: RouteContext) {
   if (!isUuid(id)) return errorResponse("ID penulis tidak valid.", 422);
 
   try {
-    const author = await prisma.author.findUnique({ where: { id }, select: authorSelect });
+    const author = await prisma.author.findUnique({ where: { id, schoolId: auth.schoolId }, select: authorSelect });
     return author ? NextResponse.json({ data: toAuthorResponse(author) }, { headers: noStoreHeaders }) : errorResponse("Penulis tidak ditemukan.", 404);
   } catch {
     return errorResponse("Terjadi kesalahan pada server.", 500);
@@ -74,10 +74,10 @@ export async function PATCH(request: Request, context: RouteContext) {
 
   try {
     const author = await prisma.$transaction(async (tx) => {
-      const current = await tx.author.findUnique({ where: { id }, select: authorSelect });
+      const current = await tx.author.findUnique({ where: { id, schoolId: auth.schoolId }, select: authorSelect });
       if (!current) return null;
-      const updated = await tx.author.update({ where: { id }, data: { name }, select: authorSelect });
-      await tx.auditLog.create({ data: { userId: auth.user.id, action: "UPDATE", entityType: "Author", entityId: id, oldData: jsonValue(current), newData: jsonValue(updated), ipAddress: getClientIp(request) } });
+      const updated = await tx.author.update({ where: { id, schoolId: auth.schoolId }, data: { name }, select: authorSelect });
+      await tx.auditLog.create({ data: { schoolId: auth.schoolId, userId: auth.user.id, action: "UPDATE", entityType: "Author", entityId: id, oldData: jsonValue(current), newData: jsonValue(updated), ipAddress: getClientIp(request) } });
       return updated;
     });
     return author ? NextResponse.json({ data: toAuthorResponse(author) }, { headers: noStoreHeaders }) : errorResponse("Penulis tidak ditemukan.", 404);
@@ -95,11 +95,11 @@ export async function DELETE(request: Request, context: RouteContext) {
 
   try {
     const deleted = await prisma.$transaction(async (tx) => {
-      const author = await tx.author.findUnique({ where: { id }, select: { ...authorSelect, _count: { select: { books: true } } } });
+      const author = await tx.author.findUnique({ where: { id, schoolId: auth.schoolId }, select: { ...authorSelect, _count: { select: { books: true } } } });
       if (!author) return false;
       if (author._count.books > 0) throw new Error("AUTHOR_HAS_BOOKS");
-      await tx.author.delete({ where: { id } });
-      await tx.auditLog.create({ data: { userId: auth.user.id, action: "DELETE", entityType: "Author", entityId: id, oldData: jsonValue(author), ipAddress: getClientIp(request) } });
+      await tx.author.delete({ where: { id, schoolId: auth.schoolId } });
+      await tx.auditLog.create({ data: { schoolId: auth.schoolId, userId: auth.user.id, action: "DELETE", entityType: "Author", entityId: id, oldData: jsonValue(author), ipAddress: getClientIp(request) } });
       return true;
     }, { isolationLevel: "Serializable" });
     return deleted ? new NextResponse(null, { status: 204 }) : errorResponse("Penulis tidak ditemukan.", 404);

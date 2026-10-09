@@ -7,7 +7,6 @@ import { prisma } from "@/lib/prisma";
 export const runtime = "nodejs";
 
 const MAX_BATCH_SIZE = 500;
-const SETTING_KEY = "DEFAULT";
 
 function errorResponse(error: string, status: number) {
   return NextResponse.json({ error }, { status, headers: noStoreHeaders });
@@ -43,14 +42,11 @@ export async function POST(request: Request) {
   const now = new Date();
 
   try {
-    const settings = await prisma.librarySetting.findUnique({ where: { key: SETTING_KEY }, select: { fineRatePerDay: true } });
-    if (!settings) return errorResponse("Pengaturan perpustakaan belum tersedia.", 500);
-
     const candidates = await prisma.loanItem.findMany({
       where: { returnedAt: null, loan: { status: { in: ["AKTIF", "SEBAGIAN_DIKEMBALIKAN"] }, dueDate: { lt: now } } },
       orderBy: [{ loan: { dueDate: "asc" } }, { id: "asc" }],
       take: MAX_BATCH_SIZE,
-      select: { id: true },
+      select: { id: true, schoolId: true },
     });
 
     let created = 0;
@@ -70,16 +66,18 @@ export async function POST(request: Request) {
         });
 
         if (!item || item.returnedAt || !["AKTIF", "SEBAGIAN_DIKEMBALIKAN"].includes(item.loan.status)) return "SKIPPED" as const;
+        const settings = await tx.librarySetting.findUnique({ where: { schoolId: candidate.schoolId }, select: { fineRatePerDay: true } });
+        if (!settings) return "SKIPPED" as const;
 
         const daysLate = calculateDaysLate(item.loan.dueDate, now);
         if (daysLate <= 0 || (item.fine && item.fine.status !== "BELUM_DIBAYAR")) return "SKIPPED" as const;
 
         if (!item.fine) {
           const fine = await tx.fine.create({
-            data: { loanItemId: item.id, type: "TERLAMBAT", daysLate, ratePerDay: settings.fineRatePerDay, amount: settings.fineRatePerDay.mul(daysLate), status: "BELUM_DIBAYAR", note: `Denda otomatis keterlambatan ${daysLate} hari.` },
+            data: { schoolId: candidate.schoolId, loanItemId: item.id, type: "TERLAMBAT", daysLate, ratePerDay: settings.fineRatePerDay, amount: settings.fineRatePerDay.mul(daysLate), status: "BELUM_DIBAYAR", note: `Denda otomatis keterlambatan ${daysLate} hari.` },
             select: { id: true, daysLate: true, ratePerDay: true, amount: true, status: true },
           });
-          await tx.auditLog.create({ data: { action: "CREATE", entityType: "Fine", entityId: fine.id, newData: jsonValue(fine) } });
+          await tx.auditLog.create({ data: { schoolId: candidate.schoolId, action: "CREATE", entityType: "Fine", entityId: fine.id, newData: jsonValue(fine) } });
           return "CREATED" as const;
         }
 
@@ -91,7 +89,7 @@ export async function POST(request: Request) {
           data: { daysLate, amount, note: `Denda otomatis keterlambatan ${daysLate} hari.` },
           select: { id: true, daysLate: true, ratePerDay: true, amount: true, status: true },
         });
-        await tx.auditLog.create({ data: { action: "UPDATE", entityType: "Fine", entityId: fine.id, oldData: jsonValue(item.fine), newData: jsonValue(fine) } });
+        await tx.auditLog.create({ data: { schoolId: candidate.schoolId, action: "UPDATE", entityType: "Fine", entityId: fine.id, oldData: jsonValue(item.fine), newData: jsonValue(fine) } });
         return "UPDATED" as const;
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }));
 

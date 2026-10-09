@@ -56,10 +56,11 @@ export async function GET(request: Request, context: RouteContext) {
     const access = await assertEbookAccessToken(
       accessId,
       auth.student.id,
+      auth.schoolId,
       request.headers.get("authorization"),
     );
 
-    await markEbookAccessUsed(access.id, auth.student.id);
+    await markEbookAccessUsed(access.id, auth.student.id, auth.schoolId);
 
     const range = request.headers.get("range");
     const object = await getEbookFile(access.ebook.fileKey, range);
@@ -83,8 +84,10 @@ export async function GET(request: Request, context: RouteContext) {
     if (object.ContentRange) headers.set("Content-Range", object.ContentRange);
     if (object.ETag) headers.set("ETag", object.ETag);
 
+    const status = object.ContentRange ? 206 : 200;
+
     return new NextResponse(object.Body.transformToWebStream(), {
-      status: range ? 206 : 200,
+      status,
       headers,
     });
   } catch (error) {

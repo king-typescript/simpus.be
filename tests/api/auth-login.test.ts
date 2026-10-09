@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+﻿import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   verify: vi.fn(),
@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   auditCreate: vi.fn(),
   transaction: vi.fn(),
   createAuthToken: vi.fn(),
+  countFailed: vi.fn(),
 }));
 
 vi.mock("argon2", () => ({
@@ -19,9 +20,18 @@ vi.mock("@/lib/prisma", () => ({
       findUnique: mocks.findUnique,
       update: mocks.update,
     },
-    auditLog: { create: mocks.auditCreate },
+    auditLog: { create: mocks.auditCreate, count: mocks.countFailed },
     $transaction: mocks.transaction,
   },
+}));
+
+vi.mock("@/lib/rate-limit", () => ({
+  isRateLimited: async (keys: (string | null)[]) => {
+    if (!keys.length) return false;
+    const count = await mocks.countFailed();
+    return count >= 5;
+  },
+  recordAccountFailure: async () => {},
 }));
 
 vi.mock("@/lib/auth", () => ({
@@ -64,6 +74,7 @@ async function expectJsonError(response: Response, status: number, error: string
 
 beforeEach(() => {
   vi.resetAllMocks();
+  mocks.countFailed.mockResolvedValue(0);
   mocks.createAuthToken.mockResolvedValue("signed-auth-token");
   mocks.findUnique.mockResolvedValue(activeUser);
   mocks.verify.mockResolvedValue(true);
@@ -223,7 +234,19 @@ describe("POST /api/auth/login", () => {
     expect(cookie).toContain("Path=/");
   });
 
-  it.each([
+  it("returns 429 when IP is rate limited", async () => {
+    mocks.countFailed.mockResolvedValue(5);
+
+    await expectJsonError(
+      await POST(requestWithBody({ schoolCode: "SCH", username: "librarian", password: "correct-password" })),
+      429,
+      "Terlalu banyak percobaan login. Coba lagi nanti.",
+    );
+    expect(mocks.verify).not.toHaveBeenCalled();
+    expect(mocks.findUnique).not.toHaveBeenCalled();
+  });
+
+    it.each([
     ["database lookup", () => mocks.findUnique.mockRejectedValue(new Error("database unavailable"))],
     ["password verification", () => mocks.verify.mockRejectedValue(new Error("argon2 failure"))],
     ["last login update", () => mocks.update.mockRejectedValue(new Error("database unavailable"))],

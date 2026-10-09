@@ -56,6 +56,7 @@ export async function GET(request: Request) {
   const search = searchResult.value;
 
   const where = {
+    schoolId: auth.schoolId,
     isActive: statusResult?.ok ? statusResult.value === "AKTIF" : true,
     ...(search ? {
       OR: [
@@ -69,13 +70,13 @@ export async function GET(request: Request) {
   try {
     const [categories, total] = await prisma.$transaction([
       prisma.category.findMany({
-        where,
+        where: { ...where, schoolId: auth.schoolId },
         select: categorySelect,
         orderBy: [{ name: "asc" }, { id: "asc" }],
         skip: (page - 1) * limit,
         take: limit,
       }),
-      prisma.category.count({ where }),
+      prisma.category.count({ where: { ...where, schoolId: auth.schoolId } }),
     ]);
 
     return NextResponse.json({
@@ -107,8 +108,8 @@ export async function POST(request: Request) {
 
   try {
     const category = await prisma.$transaction(async (tx) => {
-      const created = await tx.category.create({ data: { name, ddcCode, description, isActive: true }, select: categorySelect });
-      await tx.auditLog.create({ data: { userId: auth.user.id, action: "CREATE", entityType: "Category", entityId: created.id, newData: jsonValue(created), ipAddress: getClientIp(request) } });
+      const created = await tx.category.create({ data: { schoolId: auth.schoolId, name, ddcCode, description, isActive: true }, select: categorySelect });
+      await tx.auditLog.create({ data: { schoolId: auth.schoolId, userId: auth.user.id, action: "CREATE", entityType: "Category", entityId: created.id, newData: jsonValue(created), ipAddress: getClientIp(request) } });
       return created;
     });
     return NextResponse.json({ data: toCategoryResponse(category) }, { status: 201, headers: noStoreHeaders });

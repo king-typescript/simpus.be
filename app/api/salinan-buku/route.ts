@@ -65,6 +65,7 @@ export async function GET(request: Request) {
   if (statusResult && !statusResult.ok) return errorResponse(statusResult.error, 422);
 
   const where = {
+    schoolId: auth.schoolId,
     isActive: true,
     book: { isActive: true, category: { is: { isActive: true } } },
     ...(bookId ? { bookId } : {}),
@@ -106,11 +107,11 @@ export async function POST(request: Request) {
 
   try {
     const copy = await prisma.$transaction(async (tx) => {
-      const book = await tx.book.findFirst({ where: { id: bookId, isActive: true, category: { is: { isActive: true } } }, select: { id: true } });
+      const book = await tx.book.findFirst({ where: { id: bookId, schoolId: auth.schoolId, isActive: true, category: { is: { isActive: true } } }, select: { id: true } });
       if (!book) throw new Error("BOOK_NOT_FOUND");
-      if (shelfId && !(await tx.shelf.findUnique({ where: { id: shelfId }, select: { id: true } }))) throw new Error("SHELF_NOT_FOUND");
-      const created = await tx.bookCopy.create({ data: { bookId, shelfId, barcode, status: "TERSEDIA", isActive: true, conditionNote, acquiredAt }, select: librarianSelect });
-      await tx.auditLog.create({ data: { userId: auth.user.id, action: "CREATE", entityType: "BookCopy", entityId: created.id, newData: jsonValue(created), ipAddress: getClientIp(request) } });
+      if (shelfId && !(await tx.shelf.findUnique({ where: { id: shelfId, schoolId: auth.schoolId }, select: { id: true } }))) throw new Error("SHELF_NOT_FOUND");
+      const created = await tx.bookCopy.create({ data: { schoolId: auth.schoolId, bookId, shelfId, barcode, status: "TERSEDIA", isActive: true, conditionNote, acquiredAt }, select: librarianSelect });
+      await tx.auditLog.create({ data: { schoolId: auth.schoolId, userId: auth.user.id, action: "CREATE", entityType: "BookCopy", entityId: created.id, newData: jsonValue(created), ipAddress: getClientIp(request) } });
       return created;
     });
     return NextResponse.json({ data: copy }, { status: 201, headers: noStoreHeaders });

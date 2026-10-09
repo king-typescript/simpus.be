@@ -44,7 +44,7 @@ export async function GET(_request: Request, context: RouteContext) {
   if (!isUuid(id)) return jsonError("ID anggota tidak valid.", 422);
 
   try {
-    const data = await prisma.student.findUnique({ where: { id }, select: selectStudent });
+    const data = await prisma.student.findUnique({ where: { id, schoolId: auth.schoolId }, select: selectStudent });
     return data ? NextResponse.json({ data }, { headers: noStoreHeaders }) : jsonError("Anggota tidak ditemukan.", 404);
   } catch {
     return jsonError("Terjadi kesalahan pada server.", 500);
@@ -79,11 +79,11 @@ export async function PATCH(request: Request, context: RouteContext) {
 
   try {
     const updated = await prisma.$transaction(async (tx) => {
-      const current = await tx.student.findUnique({ where: { id }, select: { ...selectStudent, userId: true } });
+      const current = await tx.student.findUnique({ where: { id, schoolId: auth.schoolId }, select: { ...selectStudent, userId: true } });
       if (!current) return null;
-      const student = await tx.student.update({ where: { id }, data, select: selectStudent });
-      if (data.name !== undefined) await tx.user.update({ where: { id: current.userId }, data: { name: data.name } });
-      await tx.auditLog.create({ data: { userId: auth.user.id, action: "UPDATE", entityType: "Student", entityId: id, oldData: jsonValue(current), newData: jsonValue(student), ipAddress: getClientIp(request) } });
+      const student = await tx.student.update({ where: { id, schoolId: auth.schoolId }, data, select: selectStudent });
+      if (data.name !== undefined) await tx.user.update({ where: { id: current.userId, schoolId: auth.schoolId }, data: { name: data.name } });
+      await tx.auditLog.create({ data: { schoolId: auth.schoolId, userId: auth.user.id, action: "UPDATE", entityType: "Student", entityId: id, oldData: jsonValue(current), newData: jsonValue(student), ipAddress: getClientIp(request) } });
       return student;
     });
     return updated ? NextResponse.json({ data: updated }, { headers: noStoreHeaders }) : jsonError("Anggota tidak ditemukan.", 404);
@@ -101,12 +101,12 @@ export async function DELETE(request: Request, context: RouteContext) {
 
   try {
     const result = await prisma.$transaction(async (tx) => {
-      const student = await tx.student.findUnique({ where: { id }, select: selectStudent });
+      const student = await tx.student.findUnique({ where: { id, schoolId: auth.schoolId }, select: selectStudent });
       if (!student) return false;
       const userId = student.user.id;
-      await tx.student.update({ where: { id }, data: { isActive: false } });
-      await tx.user.update({ where: { id: userId }, data: { status: "NONAKTIF" } });
-      await tx.auditLog.create({ data: { userId: auth.user.id, action: "DEACTIVATE", entityType: "Student", entityId: id, oldData: jsonValue(student), newData: jsonValue({ ...student, isActive: false }), ipAddress: getClientIp(request) } });
+      await tx.student.update({ where: { id, schoolId: auth.schoolId }, data: { isActive: false } });
+      await tx.user.update({ where: { id: userId, schoolId: auth.schoolId }, data: { status: "NONAKTIF" } });
+      await tx.auditLog.create({ data: { schoolId: auth.schoolId, userId: auth.user.id, action: "DEACTIVATE", entityType: "Student", entityId: id, oldData: jsonValue(student), newData: jsonValue({ ...student, isActive: false }), ipAddress: getClientIp(request) } });
       return true;
     });
     return result ? new NextResponse(null, { status: 204 }) : jsonError("Anggota tidak ditemukan.", 404);

@@ -59,6 +59,7 @@ export async function GET(request: Request) {
   if (statusResult && !statusResult.ok) return errorResponse(statusResult.error, 422);
 
   const where = {
+    schoolId: auth.schoolId,
     isActive: true,
     category: { is: { isActive: true } },
     ...(categoryId ? { categoryId } : {}),
@@ -78,8 +79,8 @@ export async function GET(request: Request) {
 
   try {
     const [data, total] = await prisma.$transaction([
-      prisma.book.findMany({ where, select: bookSelect, orderBy: [{ createdAt: "desc" }, { id: "desc" }], skip: (page - 1) * limit, take: limit }),
-      prisma.book.count({ where }),
+      prisma.book.findMany({ where: { ...where, schoolId: auth.schoolId }, select: bookSelect, orderBy: [{ createdAt: "desc" }, { id: "desc" }], skip: (page - 1) * limit, take: limit }),
+      prisma.book.count({ where: { ...where, schoolId: auth.schoolId } }),
     ]);
     const books = await Promise.all(data.map(async ({ _count, ...book }) => ({
       ...(await withCoverUrl(book)),
@@ -122,13 +123,13 @@ export async function POST(request: Request) {
   try {
     const data = await prisma.$transaction(async (tx) => {
       const [category, authors] = await Promise.all([
-        tx.category.findFirst({ where: { id: categoryId, isActive: true }, select: { id: true } }),
-        tx.author.findMany({ where: { id: { in: uniqueAuthorIds } }, select: { id: true } }),
+        tx.category.findFirst({ where: { id: categoryId, schoolId: auth.schoolId, isActive: true }, select: { id: true } }),
+        tx.author.findMany({ where: { id: { in: uniqueAuthorIds }, schoolId: auth.schoolId }, select: { id: true } }),
       ]);
       if (!category) throw new Error("CATEGORY_NOT_FOUND");
       if (authors.length !== uniqueAuthorIds.length) throw new Error("AUTHOR_NOT_FOUND");
-      const book = await tx.book.create({ data: { isbn, title, publisher, publicationYear, edition, description, coverUrl, categoryId, authors: { connect: uniqueAuthorIds.map((id) => ({ id })) } }, select: bookSelect });
-      await tx.auditLog.create({ data: { userId: auth.user.id, action: "CREATE", entityType: "Book", entityId: book.id, newData: jsonValue(book), ipAddress: getClientIp(request) } });
+      const book = await tx.book.create({ data: { schoolId: auth.schoolId, isbn, title, publisher, publicationYear, edition, description, coverUrl, categoryId, authors: { connect: uniqueAuthorIds.map((id) => ({ id })) } }, select: bookSelect });
+      await tx.auditLog.create({ data: { schoolId: auth.schoolId, userId: auth.user.id, action: "CREATE", entityType: "Book", entityId: book.id, newData: jsonValue(book), ipAddress: getClientIp(request) } });
       return book;
     });
     return NextResponse.json({ data: await withCoverUrl(data) }, { status: 201, headers: noStoreHeaders });

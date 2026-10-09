@@ -21,6 +21,7 @@ export class ReportValidationError extends Error {
 }
 
 export type PeminjamanReportFilter = {
+  schoolId: string;
   from: Date;
   toExclusive: Date;
   status?: LoanStatus;
@@ -150,6 +151,17 @@ function validateFilter(filter: PeminjamanReportFilter): void {
   }
 }
 
+async function validateCategoryScope(filter: PeminjamanReportFilter): Promise<void> {
+  if (!filter.categoryId) return;
+
+  const category = await prisma.category.findFirst({
+    where: { id: filter.categoryId, schoolId: filter.schoolId, isActive: true },
+    select: { id: true },
+  });
+
+  if (!category) throw new ReportValidationError("Kategori tidak ditemukan.");
+}
+
 function buildWhere(
   filter: PeminjamanReportFilter,
 ): Prisma.LoanItemWhereInput {
@@ -157,7 +169,9 @@ function buildWhere(
   const className = filter.className?.trim();
 
   return {
+    schoolId: filter.schoolId,
     loan: {
+      schoolId: filter.schoolId,
       loanDate: {
         gte: filter.from,
         lt: filter.toExclusive,
@@ -274,6 +288,7 @@ export async function getPeminjamanReport(
   filter: PeminjamanReportFilter,
 ): Promise<PeminjamanReportResult> {
   validateFilter(filter);
+  await validateCategoryScope(filter);
 
   const page = filter.page ?? 1;
   const limit = filter.limit ?? 50;
@@ -295,6 +310,7 @@ export async function getAllPeminjamanReport(
   filter: Omit<PeminjamanReportFilter, "page" | "limit">,
 ): Promise<PeminjamanReportItem[]> {
   validateFilter(filter);
+  await validateCategoryScope(filter);
 
   const referenceDate = filter.referenceDate ?? new Date();
 

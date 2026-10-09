@@ -91,6 +91,7 @@ export async function GET(request: Request) {
     return errorResponse("Status denda tidak valid.", 422);
   }
   const where = {
+    schoolId: auth.schoolId,
     ...(status ? { status: status as FineStatus } : {}),
     ...(search
       ? {
@@ -109,7 +110,7 @@ export async function GET(request: Request) {
   try {
     const [fines, total] = await prisma.$transaction([
       prisma.fine.findMany({
-        where,
+        where: { ...where, schoolId: auth.schoolId },
         select: fineSelect,
         orderBy: [{ status: "asc" }, { createdAt: "desc" }, { id: "desc" }],
         skip: (page - 1) * limit,

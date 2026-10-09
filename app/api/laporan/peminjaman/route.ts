@@ -45,6 +45,7 @@ export async function GET(request: Request) {
 
   try {
     const report = await getPeminjamanReport({
+      schoolId: auth.schoolId,
       from: filters.dateRange.from,
       toExclusive: filters.dateRange.toExclusive,
       status: filters.status,

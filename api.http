@@ -44,11 +44,13 @@ Authorization: Bearer 2f37709150832e3dcf227bae6c1787c2c56833979e4b6fdfb1b862bf51
 Content-Type: application/json
 
 ### perpanjang
-POST http://localhost:3000/api/sirkulasi/perpanjang
+POST http://localhost:3000/api/sirkulasi/perpanjang/
 Content-Type: application/json
 
 {
-  "loanId": "uuid"
+  "loanId": "3d2563a4-07fc-4389-9ab9-a260670bd86e",
+  "additionalDays": 7,
+  "notes": "Perpanjangan disetujui"
 }
 // Dockerfile
 ### list kategori
@@ -58,3 +60,18 @@ Content-Type: application/json
 ### book-cover
 POST http://localhost:3000/api/upload/cover
 Content-Type: application/json
+
+### PINJAMAN aktif
+GET http://localhost:3000/api/sirkulasi/pinjaman-aktif
+Content-Type: application/json
+
+### PINJAMAN 
+POST http://localhost:3000/api/sirkulasi/pinjam
+Content-Type: application/json
+
+{
+  "studentId": "94c38d2f-0b69-4b79-aeed-b423720af87f",
+  "copyIds": ["463190f6-dcbb-414e-88af-ec48ba8e38ab"],
+  "dueDate": "2026-10-14T00:00:00.000Z",
+  "notes": "Test pinjam"
+}

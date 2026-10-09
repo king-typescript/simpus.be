@@ -97,6 +97,7 @@ export async function POST(request: Request, context: RouteContext) {
       const current = await tx.bookCopy.findFirst({
         where: {
           id,
+          schoolId: auth.schoolId,
           isActive: true,
           book: { isActive: true, category: { is: { isActive: true } } },
         },
@@ -117,6 +118,7 @@ export async function POST(request: Request, context: RouteContext) {
       if (requestedStatus === "TERSEDIA") {
         const activeLoan = await tx.loanItem.findFirst({
           where: {
+            schoolId: auth.schoolId,
             copyId: id,
             returnedAt: null,
             loan: { status: { in: ["AKTIF", "SEBAGIAN_DIKEMBALIKAN"] } },
@@ -127,7 +129,7 @@ export async function POST(request: Request, context: RouteContext) {
       }
 
       const updatedCopy = await tx.bookCopy.update({
-        where: { id },
+        where: { id, schoolId: auth.schoolId },
         data: {
           status: requestedStatus,
           ...(conditionNote !== undefined ? { conditionNote } : {}),
@@ -137,6 +139,7 @@ export async function POST(request: Request, context: RouteContext) {
 
       await tx.auditLog.create({
         data: {
+          schoolId: auth.schoolId,
           userId: auth.user.id,
           action: "CHANGE_STATUS",
           entityType: "BookCopy",

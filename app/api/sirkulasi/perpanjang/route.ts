@@ -66,7 +66,7 @@ export async function POST(request: Request) {
     const result = await serializable(() =>
       prisma.$transaction(async (tx) => {
         const loan = await tx.loan.findUnique({
-          where: { id: loanId },
+          where: { id: loanId, schoolId: auth.schoolId },
           select: {
             id: true,
             dueDate: true,
@@ -81,7 +81,7 @@ export async function POST(request: Request) {
         if (!loan.items.some((item) => item.returnedAt === null)) throw new Error("LOAN_ALREADY_RETURNED");
 
         const renewalCount = await tx.auditLog.count({
-          where: { action: RENEWAL_ACTION, entityType: ENTITY_TYPE, entityId: loan.id },
+          where: { schoolId: auth.schoolId, action: RENEWAL_ACTION, entityType: ENTITY_TYPE, entityId: loan.id },
         });
         if (renewalCount >= MAX_RENEWAL_COUNT) throw new Error("RENEWAL_LIMIT_REACHED");
 
@@ -90,13 +90,14 @@ export async function POST(request: Request) {
         newDueDate.setUTCDate(newDueDate.getUTCDate() + additionalDays);
 
         const updatedLoan = await tx.loan.update({
-          where: { id: loan.id },
+          where: { id: loan.id, schoolId: auth.schoolId },
           data: { dueDate: newDueDate, ...(notes !== null ? { notes } : {}) },
           select: { id: true, dueDate: true, status: true, notes: true },
         });
 
         await tx.auditLog.create({
           data: {
+            schoolId: auth.schoolId,
             userId: auth.user.id,
             action: RENEWAL_ACTION,
             entityType: ENTITY_TYPE,
