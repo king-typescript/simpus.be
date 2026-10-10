@@ -2,7 +2,11 @@ import "dotenv/config";
 
 import argon2 from "argon2";
 import { randomBytes } from "node:crypto";
-import { prisma } from "../lib/prisma";
+import { PrismaPg } from "@prisma/adapter-pg";
+import { PrismaClient } from "../app/generated/prisma/client";
+
+const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL! });
+const prisma = new PrismaClient({ adapter });
 
 function option(name: string): string {
   const index = process.argv.indexOf(`--${name}`);
